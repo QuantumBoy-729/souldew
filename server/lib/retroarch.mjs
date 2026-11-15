@@ -104,41 +104,73 @@ export const sharedDir = (env = process.env) => env.SOULDEW_SHARED_DIR || '/stor
 
 let detected = { at: 0, value: null };
 /**
- * Is the RetroArch app installed? `pm path <package>` (Termux has it); the answer is kept for half a minute because
- * the status route asks on every page load. Not installed anywhere but on Android.
+ * Is the RetroArch app installed? `pm path <package>` answers when souldew runs as an app. Termux isn't allowed to
+ * call the package manager ("Failure calling service package") – then it can't be told, and RetroArch counts as
+ * installed: the launch finds out, and says so if the app isn't there. The answer is kept for half a minute because the
+ * status route asks on every page load. Not installed anywhere but on Android.
  */
 export function detectRetroArch({ run = spawnSync, now = Date.now(), env = process.env, android = isAndroid() } = {}) {
   if (!android) return { installed: false };
   if (detected.value && now - detected.at < 30000) return detected.value;
   const pkgs = env.SOULDEW_RETROARCH_PKG ? [env.SOULDEW_RETROARCH_PKG] : PACKAGES;
   let value = { installed: false };
+  let unknown = false;
   for (const pkg of pkgs) {
     if (!/^[\w.]+$/.test(pkg)) continue;
     let r;
     try {
       r = run('pm', ['path', pkg], { encoding: 'utf8', timeout: 5000 });
     } catch {
+      unknown = true;
       continue;
     }
     if (r?.status === 0 && /^package:/m.test(r.stdout || '')) {
-      value = { installed: true, path: pkg, source: 'system' };
+      value = { installed: true, path: pkg, pkg, source: 'system' };
+      unknown = false;
       break;
     }
+    // a package that isn't installed prints nothing; a refused call prints an error (or can't start at all)
+    if (r?.error || /Failure|cmd:|denied|Exception/i.test(`${r?.stderr || ''}${r?.stdout || ''}`)) unknown = true;
   }
+  if (!value.installed && unknown) value = { installed: true, path: 'RetroArch', pkg: null, source: 'assumed' };
   detected = { at: now, value };
   return value;
 }
 
+/** Runs one `am start` and resolves { code, out } once it has finished (it returns as soon as the app is asked to start). */
+function startOnce(run, args, timeout = 15000) {
+  return new Promise((resolve, reject) => {
+    const child = run('am', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    const timer = setTimeout(() => {
+      child.kill?.();
+      resolve({ code: null, out: `${out}timeout` });
+    }, timeout);
+    timer.unref?.();
+    child.stdout?.on('data', (d) => (out += d));
+    child.stderr?.on('data', (d) => (out += d));
+    child.once('error', (e) => {
+      clearTimeout(timer);
+      reject(httpError(500, `RetroArch konnte nicht gestartet werden: ${e.message}`, 'emuLaunch', { emu: 'RetroArch', detail: e.code || e.message }));
+    });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, out });
+    });
+  });
+}
+
 /**
  * Starts RetroArch with `rom` through Android's `am`. The app can only read shared storage, so a ROM outside it is
- * copied into souldew's shared folder first, and the config file (network commands on) goes there too. Returns
- * { rom, config } – the paths RetroArch got.
+ * copied into souldew's shared folder first. RetroArch's own settings stay in charge (touch overlay, menu, controls): a
+ * generated config would replace them all, so it is opt-in (SOULDEW_RETROARCH_CONFIG=generated); otherwise Network
+ * Commands are switched on in RetroArch by hand, once. Without a known package every RetroArch build is tried in turn.
+ * Returns { rom, config, pkg }.
  */
-export async function launchRetroArch(rom, { pkg, env = process.env, run = spawn, shared = sharedDir(env) } = {}) {
+export async function launchRetroArch(rom, { pkg = null, env = process.env, run = spawn, shared = sharedDir(env) } = {}) {
   const system = systemOfRom(rom);
   if (!system) throw httpError(400, 'RetroArch spielt hier nur GBA- und Game-Boy-Spiele', 'retroarchSystem');
   if (/[\0\r\n]/.test(String(rom))) throw httpError(400, 'Ungültiger Pfad', 'badEmulatorPath');
-  pkg ||= detectRetroArch({ env }).path || PACKAGES[0];
   let staged = rom;
   const readable = /^\/(?:storage|sdcard)\//.test(String(rom));
   try {
@@ -151,20 +183,20 @@ export async function launchRetroArch(rom, { pkg, env = process.env, run = spawn
   } catch (e) {
     throw httpError(500, `Gemeinsamer Ordner nicht beschreibbar: ${e.message}`, 'retroarchShared', { detail: e.code || e.message, dir: shared });
   }
-  // RetroArch's own settings stay in charge (touch controls, menu). A generated config replaces them all, so it is
-  // opt-in: SOULDEW_RETROARCH_CONFIG=generated. Otherwise Network Commands are switched on by hand, once.
   let config = null;
   if (env.SOULDEW_RETROARCH_CONFIG === 'generated') {
     config = posix.join(shared, 'retroarch.cfg');
     writeFileAtomic(config, configLines());
   }
-  const child = run('am', launchArgs({ pkg, rom: staged, system, config }), { detached: true, stdio: 'ignore' });
-  await new Promise((resolve, reject) => {
-    child.once('spawn', resolve);
-    child.once('error', (e) => reject(httpError(500, `RetroArch konnte nicht gestartet werden: ${e.message}`, 'emuLaunch', { emu: 'RetroArch', detail: e.code || e.message })));
-  });
-  child.unref?.();
-  return { rom: staged, config };
+  const pkgs = pkg ? [pkg] : env.SOULDEW_RETROARCH_PKG ? [env.SOULDEW_RETROARCH_PKG] : PACKAGES;
+  let last = '';
+  for (const p of pkgs) {
+    if (!/^[\w.]+$/.test(p)) continue;
+    const { code, out } = await startOnce(run, launchArgs({ pkg: p, rom: staged, system, config }));
+    if (code === 0 && !/Error|does not exist|not found|Exception|Unable/i.test(out)) return { rom: staged, config, pkg: p };
+    last = out.trim().split('\n').slice(-2).join(' ').slice(0, 200);
+  }
+  throw httpError(404, `RetroArch lässt sich nicht starten: ${last}`, 'retroarchStart', { detail: last || 'no answer' });
 }
 
 /** UDP client for RetroArch's command port. One request at a time; a lost datagram is a timeout, not a hang. */

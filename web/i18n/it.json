@@ -394,6 +394,7 @@
   "err.presetValues": "Mancano le impostazioni del preset",
   "err.requestTooLarge": "Richiesta troppo grande",
   "err.retroarchShared": "Impossibile scrivere nella cartella condivisa {dir} ({detail}). Consenti prima l’accesso all’archiviazione (Termux: esegui una volta termux-setup-storage).",
+  "err.retroarchStart": "Impossibile avviare RetroArch ({detail}). È installato?",
   "err.retroarchSystem": "RetroArch qui avvia solo giochi Game Boy, Game Boy Color e GBA",
   "err.retry": "Riprova",
   "err.romNotBuilt": "La ROM di questo giocatore non è ancora stata costruita",

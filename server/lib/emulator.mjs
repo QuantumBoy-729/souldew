@@ -301,7 +301,7 @@ export async function installDownloaded(id, name, bytes, dir, { platform = proce
 export async function launchRom(id, romPath, { customPath, script } = {}) {
   const emu = detectEmulator(id, customPath);
   if (!emu.installed) throw httpError(404, `${EMULATORS[id]?.name || id} ist nicht installiert`, 'emuNotInstalled', { emu: EMULATORS[id]?.name || id });
-  if (id === 'retroarch') return { ...emu, script, ...(await launchRetroArch(romPath, { pkg: emu.path })) };
+  if (id === 'retroarch') return { ...emu, script, ...(await launchRetroArch(romPath, { pkg: emu.pkg || null })) };
   // A .cia isn't started from the file – Azahar installs it (File › Install CIA) and lists the game; open it empty.
   const args = romPath && !(id === 'azahar' && /\.z?cia$/i.test(romPath)) ? [romPath] : [];
   let child;

@@ -394,6 +394,7 @@
   "err.presetValues": "Die Einstellungen für das Preset fehlen",
   "err.requestTooLarge": "Anfrage zu groß",
   "err.retroarchShared": "In den gemeinsamen Ordner {dir} kann nicht geschrieben werden ({detail}). Erlaube zuerst den Speicherzugriff (Termux: einmal termux-setup-storage ausführen).",
+  "err.retroarchStart": "RetroArch konnte nicht gestartet werden ({detail}). Ist es installiert?",
   "err.retroarchSystem": "RetroArch spielt hier nur Game-Boy-, Game-Boy-Color- und GBA-Spiele",
   "err.retry": "Erneut versuchen",
   "err.romNotBuilt": "Das ROM für diesen Spieler wurde noch nicht gebaut",

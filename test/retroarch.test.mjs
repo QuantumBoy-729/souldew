@@ -166,7 +166,7 @@ test('the RetroArch app is found with pm path, and only on Android', () => {
   };
   assert.deepEqual(detectRetroArch({ run, android: false, now: 1e9 }), { installed: false });
   assert.equal(calls.length, 0);
-  assert.deepEqual(detectRetroArch({ run, android: true, now: 2e9, env: {} }), { installed: true, path: 'com.retroarch', source: 'system' });
+  assert.deepEqual(detectRetroArch({ run, android: true, now: 2e9, env: {} }), { installed: true, path: 'com.retroarch', pkg: 'com.retroarch', source: 'system' });
   assert.deepEqual(calls.map((c) => c[2]), ['com.retroarch.aarch64', 'com.retroarch']);
   // kept for a while: no second round of pm calls
   detectRetroArch({ run, android: true, now: 2e9 + 1000, env: {} });
@@ -174,6 +174,17 @@ test('the RetroArch app is found with pm path, and only on Android', () => {
   // a package name from the environment is used as given, but only if it is a plain package name
   assert.equal(detectRetroArch({ run, android: true, now: 3e9, env: { SOULDEW_RETROARCH_PKG: 'x; rm -rf /' } }).installed, false);
   assert.equal(calls.length, 2);
+});
+
+test('Termux cannot call pm: RetroArch counts as installed and the launch finds out', () => {
+  const refused = () => ({ status: 255, stdout: '', stderr: 'cmd: Failure calling service package: Failed transaction (2147483646)' });
+  assert.deepEqual(detectRetroArch({ run: refused, android: true, now: 4e9, env: {} }), { installed: true, path: 'RetroArch', pkg: null, source: 'assumed' });
+  // a package that is simply not installed prints nothing: not installed
+  const missing = () => ({ status: 1, stdout: '', stderr: '' });
+  assert.deepEqual(detectRetroArch({ run: missing, android: true, now: 5e9, env: {} }), { installed: false });
+  // pm itself missing
+  const noPm = () => ({ error: Object.assign(new Error('spawn pm ENOENT'), { code: 'ENOENT' }), status: null });
+  assert.equal(detectRetroArch({ run: noPm, android: true, now: 6e9, env: {} }).installed, true);
 });
 
 test('launching stages the ROM and the config in the shared folder and starts RetroArch with am', async () => {
@@ -184,13 +195,18 @@ test('launching stages the ROM and the config in the shared folder and starts Re
     writeFileSync(rom, Buffer.alloc(64, 7));
     const shared = join(dir, 'shared');
     let started = null;
-    const run = (cmd, args) => {
+    const fakeAm = (out, code = 0) => (cmd, args) => {
       started = [cmd, args];
       const child = new EventEmitter();
-      child.unref = () => {};
-      setImmediate(() => child.emit('spawn'));
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      setImmediate(() => {
+        child.stdout.emit('data', out);
+        child.emit('close', code);
+      });
       return child;
     };
+    const run = fakeAm('Starting: Intent { cmp=com.retroarch/.x }\n');
     const r = await launchRetroArch(rom, { pkg: 'com.retroarch', run, shared, env: {} });
     assert.equal(started[0], 'am');
     assert.ok(started[1].includes('com.retroarch/com.retroarch.browser.retroactivity.RetroActivityFuture'));
@@ -205,6 +221,17 @@ test('launching stages the ROM and the config in the shared folder and starts Re
     assert.match(readFileSync(g.config, 'utf8'), /network_cmd_enable = "true"/);
     assert.ok(started[1].includes('CONFIGFILE'));
     // a ROM that is not a GBA / Game Boy game is refused before anything starts
+    started = null;
+    // without a known package, the builds are tried in turn: the first one is not installed, the second starts
+    const tried = [];
+    const second = (cmd, args) => {
+      tried.push(args[2]);
+      return fakeAm(args[2].startsWith('com.retroarch.aarch64') ? 'Error: Activity class {com.retroarch.aarch64/x} does not exist.\n' : 'Starting: Intent\n', 0)(cmd, args);
+    };
+    assert.equal((await launchRetroArch(rom, { run: second, shared, env: {} })).pkg, 'com.retroarch');
+    assert.equal(tried.length, 2);
+    // neither is installed: a clear error
+    await assert.rejects(launchRetroArch(rom, { run: fakeAm('Error: Activity class does not exist.\n'), shared, env: {} }), { code: 'retroarchStart' });
     started = null;
     await assert.rejects(launchRetroArch(join(dir, 'x.nds'), { run, shared, env: {} }), { code: 'retroarchSystem' });
     assert.equal(started, null);

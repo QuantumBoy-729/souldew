@@ -40,6 +40,7 @@ const TEXTS = {
   emuNotInstalled: (v) => t('err.emuNotInstalled', '{emu} isn’t installed – install it in Settings › Emulators', v),
   emuLaunch: (v) => t('err.emuLaunch', '{emu} couldn’t be started ({detail})', v),
   retroarchSystem: (v) => t('err.retroarchSystem', 'RetroArch plays only Game Boy, Game Boy Color and GBA games here', v),
+  retroarchStart: (v) => t('err.retroarchStart', 'RetroArch couldn’t be started ({detail}). Is it installed?', v),
   retroarchShared: (v) => t('err.retroarchShared', 'The shared folder {dir} can’t be written to ({detail}). Allow storage access first (Termux: run termux-setup-storage).', v),
   confirmMissing: () => t('err.confirmMissing', 'Please confirm first'),
   badRomUrl: () => t('err.badRomUrl', 'Invalid game address'),

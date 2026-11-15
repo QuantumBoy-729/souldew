@@ -670,6 +670,7 @@
   "err.presetValues": "The preset’s settings are missing",
   "err.requestTooLarge": "Request too large",
   "err.retroarchShared": "The shared folder {dir} can’t be written to ({detail}). Allow storage access first (Termux: run termux-setup-storage).",
+  "err.retroarchStart": "RetroArch couldn’t be started ({detail}). Is it installed?",
   "err.retroarchSystem": "RetroArch plays only Game Boy, Game Boy Color and GBA games here",
   "err.retry": "Try again",
   "err.romNotBuilt": "The ROM for this player hasn’t been built yet",
