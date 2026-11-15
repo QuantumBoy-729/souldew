@@ -52,3 +52,18 @@ export function shortPath(p) {
     .replace(/^\/(?:var\/)?home\/[^/]+(?=\/|$)/, '~')
     .replace(/^[A-Za-z]:\\Users\\[^\\]+\\(OneDrive[^\\]*)/i, '$1').replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~');
 }
+
+/**
+ * A touch screen is the main way to point (a phone or tablet – not a laptop with a touch screen next to a mouse): the
+ * game fills the screen and its controls sit in an overlay (views/play.mjs, styles.css .touch-play). `?touch=1` / `?touch=0`
+ * in the address forces it, for a browser that reports its screen wrongly (desktop mode on a tablet).
+ */
+export const IS_TOUCH = (() => {
+  try {
+    const forced = new URLSearchParams(location.hash.split('?')[1] || location.search).get('touch');
+    if (forced) return forced === '1';
+    return navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches;
+  } catch {
+    return false;
+  }
+})();

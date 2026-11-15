@@ -1196,6 +1196,7 @@
   "play.lockTextRun": "{game} appartient au run ouvert en ce moment. Pour ouvrir un autre run, ferme d’abord le jeu – ta progression est sauvegardée et tu reprendras là où tu t’es arrêté.",
   "play.lockTitle": "Ton jeu tourne encore",
   "play.louder": "Plus fort",
+  "play.menu": "Menu",
   "play.missedArea": "Zone",
   "play.missedAria": "Rencontre manquée",
   "play.missedAsk": "{species} sauvage pas capturé – marquer une zone comme épuisée ?",

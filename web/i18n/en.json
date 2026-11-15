@@ -1590,6 +1590,7 @@
   "play.lockTextRun": "{game} belongs to the run that is open now. To open another run, close the game first – your progress is saved and it continues where you left off.",
   "play.lockTitle": "Your game is still running",
   "play.louder": "Louder",
+  "play.menu": "Menu",
   "play.missedArea": "Area",
   "play.missedAria": "Missed encounter",
   "play.missedAsk": "Wild {species} not caught – mark an area as spent?",

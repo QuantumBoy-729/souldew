@@ -1,7 +1,7 @@
 import { html, useState, useEffect, useRef, useCallback } from '/vendor/htm-preact.mjs';
 import { useApp, Led, saveDiagnostics, copy } from '../lib/ui.mjs';
 import { bridgeState } from '../lib/livebridge.mjs';
-import { IS_MAC, IS_WIN, PLATFORM } from '../lib/platform.mjs';
+import { IS_MAC, IS_WIN, IS_TOUCH, PLATFORM } from '../lib/platform.mjs';
 import { diag } from '../lib/diag.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, ago } from '../lib/i18n.mjs';
@@ -259,6 +259,7 @@ export function GameSession({ session, mode }) {
   const [layoutOpen, setLayoutOpen] = useState(false);
   const [ctrFail, setCtrFail] = useState(null); // the 3DS player stopped: { message } – offers Azahar instead
   const [fs, setFs] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false); // touch screens: the overlay with the title, controls and team
   const [confirmReset, setConfirmReset] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [panelPrefs, setPanelPrefs] = useBattlePanelPrefs();
@@ -569,6 +570,27 @@ export function GameSession({ session, mode }) {
     document.addEventListener('fullscreenchange', on);
     return () => document.removeEventListener('fullscreenchange', on);
   }, []);
+
+  // the touch overlay closes on a tap into the game (the page loses focus to the frame) or anywhere outside it
+  useEffect(() => {
+    if (!menuOpen) return;
+    const away = (e) => !e.target.closest?.('.session-top, .session-bar, .session-left, .session-side, .touch-handle, .states-panel') && setMenuOpen(false);
+    const close = () => setMenuOpen(false);
+    addEventListener('pointerdown', away);
+    window.addEventListener('blur', close);
+    return () => {
+      removeEventListener('pointerdown', away);
+      window.removeEventListener('blur', close);
+    };
+  }, [menuOpen]);
+
+  // Fullscreen on a phone or tablet: a Game Boy / GBA picture is wider than tall – turn the screen sideways with it
+  // (browsers allow the lock only in fullscreen; where it isn't allowed nothing happens)
+  useEffect(() => {
+    if (!IS_TOUCH || isDs) return;
+    if (fs) screen.orientation?.lock?.('landscape')?.catch?.(() => {});
+    else screen.orientation?.unlock?.();
+  }, [fs, isDs]);
 
   // Leaving the big view (another section, the overview): no fullscreen of a page the game no longer covers, and the
   // panels that only exist in the big view don't pop up again on the way back.
@@ -1181,7 +1203,7 @@ export function GameSession({ session, mode }) {
     const romUrl = `/rom/g${romKey}.${target.system}?src=${encodeURIComponent(target.rom)}`;
     const lay = layout === 'lr' ? '&layout=Left%2FRight&dlayout=left%2Fright' : '';
     const wcore = isDs && /^(IPK|IPG|IRB|IRA|IRE|IRD)/.test(target.code || '') ? 'desmume' : '';
-    return `/player.html?system=${target.system}${wcore ? `&core=${wcore}` : ''}${lay}${fullTurbo ? '' : '&fullturbo=0'}&rom=${encodeURIComponent(romUrl)}&name=${encodeURIComponent(target.name)}&save=${encodeURIComponent(target.saveUrl)}&tap=${encodeURIComponent(t('play.tapToStart', 'Click to start'))}`;
+    return `/player.html?system=${target.system}${wcore ? `&core=${wcore}` : ''}${lay}${fullTurbo ? '' : '&fullturbo=0'}${IS_TOUCH ? '&touch=1' : '&touch=0'}&rom=${encodeURIComponent(romUrl)}&name=${encodeURIComponent(target.name)}&save=${encodeURIComponent(target.saveUrl)}&tap=${encodeURIComponent(t('play.tapToStart', 'Click to start'))}`;
   });
   const src = nativeOn && target.system !== '3ds' ? nativeSrc : wasmSrc;
   const arn = target.system === '3ds' ? ctrLayoutAspect(layout3ds) : isDs ? (layout === 'lr' ? 512 / 192 : 256 / 384) : target.system === 'gba' ? 3 / 2 : 10 / 9;
@@ -1248,7 +1270,10 @@ export function GameSession({ session, mode }) {
   const battlePanel = html`<${BattlePanel} battle=${battle} mine=${myParty} gen=${gameGen} isRun=${isRun}
     side=${panelSide} collapsed=${panelPrefs.collapsed} onPrefs=${setPanelPrefs} noMoves=${features?.moves === 'no'} />`;
   const hasLeft = !!(isRun || here || (battle?.enemy && panelSide === 'left'));
-  return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${isDs ? 'ds' : ''}`} data-v=${docVersion}>
+  const touchPlay = IS_TOUCH && mode === 'full';
+  return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${isDs ? 'ds' : ''} ${touchPlay ? 'touch-play' : ''} ${touchPlay && menuOpen ? 'menu-open' : ''}`} data-v=${docVersion}>
+    ${touchPlay && html`<button class="touch-handle" aria-expanded=${menuOpen} aria-label=${t('play.menu', 'Menu')} title=${t('play.menu', 'Menu')}
+      onClick=${() => setMenuOpen(!menuOpen)}><span aria-hidden="true">${menuOpen ? '×' : '☰'}</span></button>`}
     <div class="mini-head">
       <${Led} on=${phase === 'running' && !paused} color="green" /><span class="grow ellipsis">${target.label}</span>
       ${btn('close', t('play.close', 'Close game'), actions.close)}
@@ -1267,7 +1292,7 @@ export function GameSession({ session, mode }) {
         ${panelSide === 'left' && battlePanel}
       </aside>`}
       <div class="session-stage">
-        <div class="session-screen" onClick=${focusGame}>
+        <div class="session-screen" onClick=${() => { setMenuOpen(false); focusGame(); }}>
           <div class="console-screen" style=${`--arn:${arn}`}>
             <iframe ref=${frame} src=${src} title=${t('play.screenTitle', 'Game screen')} allow="autoplay; fullscreen; gamepad"
               class=${screenShown ? 'ci-shown' : 'ci-wait'} onLoad=${focusGame}></iframe>
