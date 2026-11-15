@@ -67,15 +67,16 @@ export function configLines({ port = RA_PORT } = {}) {
  * The `am start` arguments that open RetroArch with a game (Termux: `am start …`). `rom` and `config` are paths the
  * RetroArch app itself can read – shared storage, not Termux's private folder.
  */
-export function launchArgs({ pkg = PACKAGES[0], rom, system, config, coresDir = `/data/data/${pkg}/cores` }) {
+export function launchArgs({ pkg = PACKAGES[0], rom, system, config = null, coresDir = `/data/data/${pkg}/cores` }) {
   const core = CORES[system];
   if (!core) throw new Error(`no RetroArch core for ${system}`);
-  if (!rom || !config) throw new Error('rom and config are required');
+  if (!rom) throw new Error('rom is required');
   return [
     'start', '-n', `${pkg}/${ACTIVITY}`,
     '--es', 'ROM', rom,
     '--es', 'LIBRETRO', `${coresDir}/${core}`,
-    '--es', 'CONFIGFILE', config,
+    // without CONFIGFILE RetroArch uses the player's own settings (touch overlay, menu, controls); with it, a bare one
+    ...(config ? ['--es', 'CONFIGFILE', config] : []),
   ];
 }
 
@@ -150,8 +151,13 @@ export async function launchRetroArch(rom, { pkg, env = process.env, run = spawn
   } catch (e) {
     throw httpError(500, `Gemeinsamer Ordner nicht beschreibbar: ${e.message}`, 'retroarchShared', { detail: e.code || e.message, dir: shared });
   }
-  const config = posix.join(shared, 'retroarch.cfg');
-  writeFileAtomic(config, configLines());
+  // RetroArch's own settings stay in charge (touch controls, menu). A generated config replaces them all, so it is
+  // opt-in: SOULDEW_RETROARCH_CONFIG=generated. Otherwise Network Commands are switched on by hand, once.
+  let config = null;
+  if (env.SOULDEW_RETROARCH_CONFIG === 'generated') {
+    config = posix.join(shared, 'retroarch.cfg');
+    writeFileAtomic(config, configLines());
+  }
   const child = run('am', launchArgs({ pkg, rom: staged, system, config }), { detached: true, stdio: 'ignore' });
   await new Promise((resolve, reject) => {
     child.once('spawn', resolve);

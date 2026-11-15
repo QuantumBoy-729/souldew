@@ -195,10 +195,15 @@ test('launching stages the ROM and the config in the shared folder and starts Re
     assert.equal(started[0], 'am');
     assert.ok(started[1].includes('com.retroarch/com.retroarch.browser.retroactivity.RetroActivityFuture'));
     assert.ok(started[1].includes(r.rom));
-    assert.ok(started[1].includes(r.config));
+    // RetroArch's own settings are used: no config file named
+    assert.equal(r.config, null);
+    assert.ok(!started[1].includes('CONFIGFILE'));
     assert.match(r.rom, /shared[/]roms[/]Emerald\.gba$/);
     assert.deepEqual(readFileSync(r.rom), Buffer.alloc(64, 7));
-    assert.match(readFileSync(r.config, 'utf8'), /network_cmd_enable = "true"/);
+    // opt-in generated config: network commands on
+    const g = await launchRetroArch(rom, { pkg: 'com.retroarch', run, shared, env: { SOULDEW_RETROARCH_CONFIG: 'generated' } });
+    assert.match(readFileSync(g.config, 'utf8'), /network_cmd_enable = "true"/);
+    assert.ok(started[1].includes('CONFIGFILE'));
     // a ROM that is not a GBA / Game Boy game is refused before anything starts
     started = null;
     await assert.rejects(launchRetroArch(join(dir, 'x.nds'), { run, shared, env: {} }), { code: 'retroarchSystem' });

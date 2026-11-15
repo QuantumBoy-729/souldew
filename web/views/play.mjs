@@ -1521,7 +1521,7 @@ function RetroArchLive({ fresh }) {
     live: () => t('ext.liveOn', 'Live data is coming in'),
     unsupported: () => t('ext.raUnsupported', 'souldew has no live data for {game}.', { game: game || '?' }),
     readFailed: () => t('ext.raReadFailed', 'RetroArch answers, but its core doesn’t share this game’s memory with souldew. Live data isn’t available with this core.'),
-    noAnswer: () => t('ext.raNoAnswer', 'No answer from RetroArch yet – is the game running? souldew starts RetroArch with network commands switched on.'),
+    noAnswer: () => t('ext.raNoAnswer', 'No answer from RetroArch yet – is the game running? In RetroArch switch on Settings › Network › Network Commands (once), then start the game again.'),
     waiting: () => t('ext.raWaiting', 'Launch the game above: souldew starts RetroArch with it and reads your team while you play.'),
   }[key]();
   return html`<div class="stack-s">

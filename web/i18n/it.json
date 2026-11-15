@@ -426,7 +426,7 @@
   "ext.needEmuText": "I giochi Nintendo 3DS girano in {emu}, un emulatore gratuito. souldew scarica la sua ultima versione da GitHub e la tiene in una cartella propria.",
   "ext.pathCopied": "Incolla il percorso nel campo del nome file della finestra «Load script» di mGBA.",
   "ext.raInstall": "Installa RetroArch per Android da Google Play o F-Droid, poi riapri questa pagina. souldew lo avvia con il tuo gioco.",
-  "ext.raNoAnswer": "RetroArch non risponde ancora – il gioco è in esecuzione? souldew avvia RetroArch con i comandi di rete attivi.",
+  "ext.raNoAnswer": "RetroArch non risponde ancora – il gioco è in esecuzione? In RetroArch attiva una volta Impostazioni › Rete › Comandi di rete, poi riavvia il gioco.",
   "ext.raReadFailed": "RetroArch risponde, ma il suo core non condivide la memoria di questo gioco con souldew. Con questo core non ci sono dati in tempo reale.",
   "ext.raUnsupported": "souldew non ha dati in tempo reale per {game}.",
   "ext.raWaiting": "Avvia il gioco qui sopra: souldew apre RetroArch con quello e legge la tua squadra mentre giochi.",
