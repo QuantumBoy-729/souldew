@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { TOOLS_DIR } from './paths.mjs';
 import { httpError, renameRetry, safeFileName } from './fsutil.mjs';
 import { extractArchiveAsync } from './archive.mjs';
+import { detectRetroArch, launchRetroArch } from './retroarch.mjs';
 
 // assets: which file of the emulator's latest GitHub release to download – per platform, and per architecture
 // where the project builds for several (an arm64 Windows PC runs the x64 build of mGBA through emulation). On Linux
@@ -30,6 +31,17 @@ export const EMULATORS = {
     assets: { darwin: /-macos\.dmg$/i, win32: /-win64\.7z$/i, linux: { x64: /appimage-x64\.appimage$/i, arm64: /appimage-arm64\.appimage$/i } },
     app: /^mGBA\.app$/i,
     exe: /^(?:mGBA(?:\.exe)?|mgba-qt|mGBA[\w.+-]*\.AppImage|io\.mgba\.mGBA)$/i,
+  },
+  // Android only (server/lib/retroarch.mjs): the RetroArch app, started through `am`; live data over its network
+  // commands. It comes from Google Play / F-Droid, so there is nothing to download here.
+  retroarch: {
+    name: 'RetroArch',
+    systems: ['gb', 'gbc', 'gba'],
+    live: 'udp',
+    android: true,
+    assets: {},
+    app: /^$/,
+    exe: /^$/,
   },
   // Nintendo 3DS. Live data through its RPC server (server/lib/azahar.mjs) – switched on from the play view.
   azahar: {
@@ -133,6 +145,7 @@ export function validCustomPath(id, p) {
 export function detectEmulator(id, customPath) {
   const emu = EMULATORS[id];
   if (!emu) return { installed: false };
+  if (id === 'retroarch') return detectRetroArch();
   const candidates = [];
   const custom = customPath ? validCustomPath(id, customPath) : null;
   if (custom) candidates.push({ path: custom, source: 'custom' });
@@ -288,6 +301,7 @@ export async function installDownloaded(id, name, bytes, dir, { platform = proce
 export async function launchRom(id, romPath, { customPath, script } = {}) {
   const emu = detectEmulator(id, customPath);
   if (!emu.installed) throw httpError(404, `${EMULATORS[id]?.name || id} ist nicht installiert`, 'emuNotInstalled', { emu: EMULATORS[id]?.name || id });
+  if (id === 'retroarch') return { ...emu, script, ...(await launchRetroArch(romPath, { pkg: emu.path })) };
   // A .cia isn't started from the file – Azahar installs it (File › Install CIA) and lists the game; open it empty.
   const args = romPath && !(id === 'azahar' && /\.z?cia$/i.test(romPath)) ? [romPath] : [];
   let child;

@@ -527,6 +527,11 @@ export function discoverCandidates(home = homedir(), { platform = process.platfo
       P.join(drive, 'ROMs'), P.join(drive, 'Games'), P.join(drive, 'Emulation'), P.join(drive, 'Emulators')];
   }
   if (platform === 'linux') return [...common, ...linuxCandidates(home, env, h, list)];
+  // Android (Termux): shared storage – where a phone keeps downloads and ROM folders (needs termux-setup-storage once)
+  if (platform === 'android') {
+    const s = (...p) => P.join('/storage/emulated/0', ...p);
+    return [...common, s('Download'), s('Documents'), s('ROMs'), s('Roms'), s('roms'), s('Games'), s('RetroArch', 'downloads'), s('RetroArch', 'roms')];
+  }
   return [...common, h('Library', 'Mobile Documents', 'com~apple~CloudDocs'), h('Library', 'Application Support', 'OpenEmu', 'Game Library')];
 }
 

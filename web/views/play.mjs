@@ -1,6 +1,6 @@
 import { html, useState, useEffect, useRef, useCallback } from '/vendor/htm-preact.mjs';
 import { useApp, Led, saveDiagnostics, copy } from '../lib/ui.mjs';
-import { bridgeState } from '../lib/livebridge.mjs';
+import { bridgeState, retroarchState } from '../lib/livebridge.mjs';
 import { IS_MAC, IS_WIN, PLATFORM } from '../lib/platform.mjs';
 import { diag } from '../lib/diag.mjs';
 import { Icon } from '../lib/icons.mjs';
@@ -1501,11 +1501,50 @@ function ScriptBridge({ fresh }) {
   </div>`;
 }
 
+/** RetroArch on Android: souldew starts the app and reads the game's memory over its network commands (polled). */
+function RetroArchLive({ fresh }) {
+  const { liveInfo } = useApp();
+  const [st, setSt] = useState(null);
+  useEffect(() => {
+    let stop = false;
+    const poll = () => api.get('/api/live/retroarch').then((s) => !stop && setSt(s)).catch(() => {});
+    poll();
+    const id = setInterval(poll, 2000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, []);
+  const key = retroarchState(st, { fresh });
+  const game = st?.game ? [st.game.title, st.game.code && `(${st.game.code})`].filter(Boolean).join(' ') : '';
+  const text = {
+    live: () => t('ext.liveOn', 'Live data is coming in'),
+    unsupported: () => t('ext.raUnsupported', 'souldew has no live data for {game}.', { game: game || '?' }),
+    readFailed: () => t('ext.raReadFailed', 'RetroArch answers, but its core doesn’t share this game’s memory with souldew. Live data isn’t available with this core.'),
+    noAnswer: () => t('ext.raNoAnswer', 'No answer from RetroArch yet – is the game running? souldew starts RetroArch with network commands switched on.'),
+    waiting: () => t('ext.raWaiting', 'Launch the game above: souldew starts RetroArch with it and reads your team while you play.'),
+  }[key]();
+  return html`<div class="stack-s">
+    <div class="row nowrap" role="status" aria-live="polite"><${Led} on=${key === 'live'} color=${key === 'live' ? 'green' : 'amber'} blink=${false} /><span class="small grow">${text}</span></div>
+    ${liveInfo?.status?.detail && key === 'readFailed' && html`<p class="tiny faint">${liveInfo.status.detail}</p>`}
+  </div>`;
+}
+
 /** An external emulator that isn't installed yet (3DS: Azahar, the only way to play them). */
 function InstallEmulator({ target, emu }) {
   const { status, reloadStatus, toast } = useApp();
   const e = status.emulators[emu];
   const [busy, setBusy] = useState(false);
+  // RetroArch comes from an app store, not from here
+  if (emu === 'retroarch') {
+    return html`<div class="stack-l">
+      <div class="topbar"><h1>${target.label}</h1></div>
+      <section class="panel stack">
+        <h2>${t('ext.needEmu', '{emu} is needed for this game', { emu: e.name })}</h2>
+        <p class="small muted">${t('ext.raInstall', 'Install RetroArch for Android from Google Play or F-Droid, then open this page again. souldew starts it with your game.')}</p>
+      </section>
+    </div>`;
+  }
   const install = async () => {
     setBusy(true);
     try {
@@ -1657,7 +1696,9 @@ function ExternalPlay({ target, emu }) {
         ? html`<${ScriptBridge} fresh=${fresh} />`
         : e.live === 'rpc'
           ? html`<${AzaharBridge} fresh=${fresh} isRun=${isRun} />`
-          : html`<p class="small muted">${t('ext.saveText', '{emu} can’t share live data. Save in the game regularly – souldew reads the save file next to the ROM after every in-game save.', { emu: e.name })}</p>`}
+          : e.live === 'udp'
+            ? html`<${RetroArchLive} fresh=${fresh} />`
+            : html`<p class="small muted">${t('ext.saveText', '{emu} can’t share live data. Save in the game regularly – souldew reads the save file next to the ROM after every in-game save.', { emu: e.name })}</p>`}
       ${target.system !== '3ds' && html`<p class="tiny faint">${t('ext.switch', 'You can switch back to the built-in emulator in the settings.')}</p>`}
     </section>
   </div>`;

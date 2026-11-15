@@ -4,6 +4,19 @@
 export const REJECTED_FRESH = 2 * 60 * 1000;
 
 /**
+ * What the RetroArch reader is doing (server RetroArchBridge.status()): 'live' (frames are coming in), 'unsupported'
+ * (no live data for that game), 'readFailed' (RetroArch answers but its core doesn't share this memory), 'noAnswer'
+ * (no reply on the command port: not started yet, or network commands are off) or 'waiting' (nothing launched yet).
+ */
+export function retroarchState(st, { fresh = false } = {}) {
+  if (fresh) return 'live';
+  if (st?.error === 'noLiveData') return 'unsupported';
+  if (st?.error === 'readFailed') return 'readFailed';
+  if (st?.error === 'noAnswer') return 'noAnswer';
+  return 'waiting';
+}
+
+/**
  * One of: 'live' (data is coming in), 'noPort' (the bridge couldn't start), 'unsupported' (connected, but no live
  * data for that game), 'connected' (script connected, no game data yet), 'rejected' (a script from another install
  * or an outdated one tried to connect), 'waiting' (no script connected). `outdated`: the connected script is older

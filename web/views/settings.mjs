@@ -392,14 +392,14 @@ export function SettingsView() {
           <select value=${externalOnly(sys, status) ? Object.keys(status?.emulators || {}).find((id) => status.emulators[id].systems.includes(sys)) : cfg.emulatorFor?.[sys] || 'builtin'}
             disabled=${externalOnly(sys, status)} onChange=${(e) => save({ emulatorFor: { ...(cfg.emulatorFor || {}), [sys]: e.target.value } })}>
             ${!externalOnly(sys, status) && html`<option value="builtin">${t('set.builtin', 'Built-in (live)')}</option>`}
-            ${Object.entries(status?.emulators || {}).filter(([, e]) => e.systems.includes(sys)).map(([id, e]) => html`<option value=${id} disabled=${!e.installed && !externalOnly(sys, status)}>${e.name}${e.live === 'script' ? ` (${t('set.liveScript', 'live via script')})` : e.live === 'rpc' ? ` (${t('set.liveRpc', 'live via RPC')})` : ` (${t('set.liveSave', 'syncs on save')})`}${e.installed ? '' : ` – ${t('set.notInstalled', 'not installed')}`}</option>`)}
+            ${Object.entries(status?.emulators || {}).filter(([, e]) => e.systems.includes(sys)).map(([id, e]) => html`<option value=${id} disabled=${!e.installed && !externalOnly(sys, status)}>${e.name}${e.live === 'script' ? ` (${t('set.liveScript', 'live via script')})` : e.live === 'rpc' ? ` (${t('set.liveRpc', 'live via RPC')})` : e.live === 'udp' ? ` (${t('set.liveUdp', 'live via network commands')})` : ` (${t('set.liveSave', 'syncs on save')})`}${e.installed ? '' : ` – ${t('set.notInstalled', 'not installed')}`}</option>`)}
           </select></td></tr>`)}
       </tbody></table>
       ${Object.entries(status?.emulators || {}).map(([id, e]) => html`<div class="check-item">
         <span class=${`led green ${e.installed ? 'on' : ''}`}></span>
         <div><b style="font-weight:500">${e.name}</b> <span class="small muted">${e.systems.map((s) => s.toUpperCase()).join(' · ')}</span>
           <div class=${`tiny faint ${e.installed ? 'sm-secret' : ''}`}>${e.installed ? e.path : t('set.notInstalled', 'not installed')}</div></div>
-        ${e.installed ? html`<span class="chip ok">${t('set.installed', 'Installed')}</span>` : html`<button class="btn small" disabled=${!!busy} onClick=${() => install(id)}>${busy === id ? t('set.installing', 'Installing …') : t('set.install', 'Install')}</button>`}
+        ${e.installed ? html`<span class="chip ok">${t('set.installed', 'Installed')}</span>` : id === 'retroarch' ? null : html`<button class="btn small" disabled=${!!busy} onClick=${() => install(id)}>${busy === id ? t('set.installing', 'Installing …') : t('set.install', 'Install')}</button>`}
       </div>`)}
       ${status?.emulators?.mgba?.installed && html`<div class="note">${t('set.mgbaScriptAgain', 'For live data with mGBA: Tools › Scripting… › File › Load script… and pick this file (again after every mGBA restart):')} <span class="code">${status.live?.script}</span>
         <button class="btn small ghost" onClick=${() => { copy(status.live?.script || ''); toast({ kind: 'ok', title: t('common.copied', 'Copied'), text: status.live?.script }); }}>${t('common.copy', 'Copy')}</button></div>`}

@@ -20,6 +20,7 @@ import { buildRun, listRuns, readManifest, writeManifest, runDir, runPack, runSu
 import { SaveWatcher } from './lib/savewatch.mjs';
 import { EMULATORS, detectEmulator, installEmulator, launchRom, revealInFileManager, emulatorRunning } from './lib/emulator.mjs';
 import { LiveBridge } from './lib/livebridge.mjs';
+import { RetroArchBridge, isAndroid, systemOfRom } from './lib/retroarch.mjs';
 import { AzaharBridge, enableRpc } from './lib/azahar.mjs';
 import { CtrSessions, ctrTools, saveStamp, ctrInventory, redactHome, ctrEncrypted } from './lib/ctr.mjs';
 import { pickRenderer, validRenderer, gpuKey, remember } from './lib/ctrrenderer.mjs';
@@ -475,6 +476,9 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
   };
   const watcher = new SaveWatcher(GEN4, emit);
   const live = new LiveBridge(emit);
+  // live data from the RetroArch app on Android (server/lib/retroarch.mjs) – created on first use
+  let retroarch = null;
+  const retroarchBridge = () => (retroarch ||= new RetroArchBridge(emit));
   // 3DS in souldew's own player (server/lib/ctr.mjs): one game at a time
   const ctr = new CtrSessions();
   // the 3DS renderer "auto" (server/lib/ctrrenderer.mjs): which graphics card the last game ran on, and the step down
@@ -835,7 +839,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
       app: !DEV,
       java: detectJava(),
       upr: uprStatus(),
-      emulators: Object.fromEntries(Object.entries(EMULATORS).map(([id, e]) => [id, { name: e.name, systems: e.systems, live: e.live, ...detectEmulator(id, config.emulatorPaths?.[id]) }])),
+      emulators: Object.fromEntries(Object.entries(EMULATORS).filter(([, e]) => !e.android || isAndroid()).map(([id, e]) => [id, { name: e.name, systems: e.systems, live: e.live, ...detectEmulator(id, config.emulatorPaths?.[id]) }])),
       runs: listRuns().map((m) => ({ id: m.id, name: m.name, createdAt: m.createdAt, updatedAt: m.updatedAt, mode: runMode(m), players: m.players, outputs: m.outputs, imported: !!m.imported, game: m.game || null, randomized: m.randomizer?.enabled !== false, summary: runSummary(m.id, m) })),
       live: live.status(),
       ctr: (() => {
@@ -1392,7 +1396,10 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
     }
     const script = m[1] === 'mgba' ? live.luaScriptPath() : null;
     if (m[1] === 'azahar') azaharBridge();
-    return launchRom(m[1], romPath, { customPath: loadConfig().emulatorPaths?.[m[1]], script });
+    const launched = await launchRom(m[1], romPath, { customPath: loadConfig().emulatorPaths?.[m[1]], script });
+    // RetroArch has no script to load: souldew reads the game's memory itself once it runs
+    if (m[1] === 'retroarch') await retroarchBridge().watch(romPath, systemOfRom(romPath));
+    return launched;
   });
 
   // ---- trophies: Pokédex, achievements, medals across every run (server/lib/trophies.mjs) ----
@@ -1404,6 +1411,7 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
   });
 
   route('GET', /^\/api\/live$/, () => live.status());
+  route('GET', /^\/api\/live\/retroarch$/, () => retroarchBridge().status());
   // Azahar's RPC server: what it reports, and switching it on in Azahar's settings (only on request – it is reachable
   // from the local network while Azahar runs, see server/lib/azahar.mjs)
   route('GET', /^\/api\/live\/azahar$/, () => azaharBridge().status());
@@ -1723,6 +1731,8 @@ export function startServer({ port = 7373, host = '127.0.0.1', background = true
   server.on('close', () => {
     ctr.stop();
     azahar?.stop();
+    retroarch?.stop();
+    retroarch?.client.close();
     streamHub.close();
     pokelink.bridge?.close();
     pokelink.bridge = null;
