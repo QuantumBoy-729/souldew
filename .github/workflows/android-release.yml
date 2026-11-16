@@ -63,7 +63,7 @@ jobs:
     secrets: inherit
 
   publish:
-    name: Create the GitHub release (draft)
+    name: Create the GitHub release (draft), or add the APK to the existing one
     needs: [check, apk]
     runs-on: ubuntu-24.04
     permissions:
@@ -95,9 +95,16 @@ jobs:
             import { readFileSync, writeFileSync } from 'node:fs';
             const { changelogSection } = await import('./scripts/release.mjs');
             writeFileSync('notes.md', changelogSection(readFileSync('android/CHANGELOG.md', 'utf8'), process.env.VERSION) + '\n');"
-          gh release create "$GITHUB_REF_NAME" "dist/souldew-$VERSION-android-arm64.apk" \
-            --repo "$GITHUB_REPOSITORY" --title "souldew for Android $VERSION" --notes-file notes.md --draft --verify-tag
-          {
-            echo "### Draft release $GITHUB_REF_NAME created"
-            echo "Check the APK and the notes on GitHub, then press **Publish**."
-          } >> "$GITHUB_STEP_SUMMARY"
+          apk="dist/souldew-$VERSION-android-arm64.apk"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # a release for this tag exists already (made by hand on the GitHub page): its title and notes stay as they are
+            gh release upload "$GITHUB_REF_NAME" "$apk" --repo "$GITHUB_REPOSITORY" --clobber
+            echo "### The APK was added to the existing release $GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh release create "$GITHUB_REF_NAME" "$apk" \
+              --repo "$GITHUB_REPOSITORY" --title "souldew for Android $VERSION" --notes-file notes.md --draft --verify-tag
+            {
+              echo "### Draft release $GITHUB_REF_NAME created"
+              echo "Check the APK and the notes on GitHub, then press **Publish**."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
