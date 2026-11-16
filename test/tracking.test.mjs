@@ -694,15 +694,19 @@ test('HGSS: a status condition from the battle shows during the battle, not only
 
 // ---------------------------------------------------------------------------
 // Black 2 battles (#11, #12): the party copies in the heap keep the HP the battle started with; the battle's own
-// structs ({ species, max HP, HP, … level at +12 }, one per team member) and its team-order pointer arrays say who
-// is out and how much HP is left.
+// structs ({ species, max HP, HP, … level at +12 }, one per team member, 0x0C after a pointer to that Pokémon in the
+// battle's party copy) and its team-order pointer arrays say who is out and how much HP is left.
 
 const B2E = findEntry(TABLE, { platform: 'nds', code: 'IREO' });
 function b2Battle() {
   const { m, w, read } = dsRam();
   const u32 = (v) => [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, v >>> 24];
   const flag = (v) => w(0x021b5138, [v & 0xff, v >> 8]);
-  const struct = (addr, { species, maxHp, hp, level }) => w(addr, [species & 0xff, species >> 8, maxHp & 0xff, maxHp >> 8, hp & 0xff, hp >> 8, 0, 0, 0, 0, 0, 0, level, 0]);
+  // `pp`: the Pokémon in the battle's party copy (copy + 8 + slot × 220) – left as it is when not given
+  const struct = (addr, { species, maxHp, hp, level }, pp) => {
+    if (pp) w(addr - 0x0c, u32(pp));
+    w(addr, [species & 0xff, species >> 8, maxHp & 0xff, maxHp >> 8, hp & 0xff, hp >> 8, 0, 0, 0, 0, 0, 0, level, 0]);
+  };
   return { m, w, read, flag, struct, u32 };
 }
 const g5 = ({ pid, species, level, hp, maxHp, tid = 4242 }) => ({ pid, species, level, hp, maxHp, tid, size: 220 });
@@ -718,9 +722,9 @@ test('Black 2: the Pokémon you switch in shows on the battle helper, with its l
   w(0x02300000, core([g5(PATRAT)]));
   // the battle structs (two copies each, as in the game) and the team order arrays: battle order, own order
   const S = { tepig: 0x0225b1f0, purr: 0x0225b414, patrat: 0x0225b638 };
-  struct(S.tepig, TEPIG); struct(S.tepig + 0x66c, TEPIG);
-  struct(S.purr, PURR); struct(S.purr + 0x66c, PURR);
-  struct(S.patrat, PATRAT);
+  struct(S.tepig, TEPIG, 0x02320008); struct(S.tepig + 0x66c, TEPIG, 0x02320008);
+  struct(S.purr, PURR, 0x02320008 + 220); struct(S.purr + 0x66c, PURR, 0x02320008 + 220);
+  struct(S.patrat, PATRAT, 0x02300008);
   const order = (a, b) => w(0x0225736c, [...u32(a - 0x0c), ...u32(b - 0x0c)]);
   order(S.tepig, S.purr);
   w(0x022573ec, [...u32(S.tepig - 0x0c), ...u32(S.purr - 0x0c)]);
@@ -749,9 +753,9 @@ test('Black 2: a trainer’s next Pokémon shows once the first one fainted – 
   const party = g5party([TEPIG]);
   w(0x02320000, core([g5(TEPIG)]));
   w(0x02300000, core([g5(A), g5(B)]));
-  struct(0x0225b1f0, TEPIG);
-  struct(0x0225b414, A);
-  struct(0x0225b638, B);
+  struct(0x0225b1f0, TEPIG, 0x02320008);
+  struct(0x0225b414, A, 0x02300008);
+  struct(0x0225b638, B, 0x02300008 + 220);
   w(0x0225736c, u32(0x0225b1f0 - 0x0c));
   flag(0x2100);
   const state = {};
@@ -771,8 +775,8 @@ test('Black 2: the panel stays for a whole long battle and through a poll withou
   const party = g5party([TEPIG]);
   w(0x02320000, core([g5(TEPIG)]));
   w(0x02300000, core([g5(PATRAT)]));
-  struct(0x0225b1f0, TEPIG);
-  struct(0x0225b414, PATRAT);
+  struct(0x0225b1f0, TEPIG, 0x02320008);
+  struct(0x0225b414, PATRAT, 0x02300008);
   flag(0x2100);
   const state = {};
   for (let i = 0; i < 6; i++) readLiveBattle(B2E, read, T, state, party);

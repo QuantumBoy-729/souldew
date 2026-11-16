@@ -2,6 +2,84 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## 2.7.4
+
+- **“Playing now” on the souldew Discord.** The server now shows how many people are playing in souldew right now – as
+  the locked channel “🎮 Playing now: N” and in the bot's status. It is counted anonymously: only while a game actually
+  runs (fast player, 3DS player or browser player), the app sends one small message a minute with the system (GB, GBA,
+  DS, 3DS), solo / Nuzlocke / SoulLink, the app version and a random id that is new for every game – no name, no
+  account, no game title, no run data, and the bot doesn't store the IP address. Closing the game or the app ends it;
+  offline nothing happens. Don't want to be counted? Settings › General › “Count me in ‘playing now’ (anonymous)”
+  switches it off at once. Exactly what is sent and kept: [docs/PRIVACY.md](docs/PRIVACY.md); Help › Questions explains
+  it too.
+
+## 2.7.3
+
+- **No more false deaths in Black/White and Black 2/White 2 battles** (thanks to a player on Discord for the report). A
+  Pokémon that was switched out and grew a level from the shared EXP could be reported as dead – the SoulLink popup came
+  up, yet in the game it was fine. souldew reads the live HP from the battle's own data and found each Pokémon there by
+  species, level and max HP; once the level-up changed those, it took the wild Pokémon of the same kind instead, which
+  had just been knocked out (reproduced in Black 2 in the fast player). It now recognizes every Pokémon in the battle by
+  its own ID, so a look-alike opponent never stands in for it, and a level-up mid-battle keeps its live HP. On top of
+  that, in every game a Pokémon has to read 0 HP twice in a row before souldew files a death – a real knock-out still
+  shows a moment later, in the battle.
+- **Hall of Fame** (idea from the community). Won a run? The run-won notice and the board now offer “Post to the Hall
+  of Fame”: your final team – in a SoulLink as its linked pairs or groups, each player's Pokémon in their colour – with
+  the game, the rules, the deaths, the play time and the players goes up as its own post in the new #hall-of-fame forum
+  on the souldew Discord, where everyone can react and congratulate. A preview shows the card first, and nothing is
+  posted until you press the button. It needs Live runs (Settings › Discord); without it the notice says how to connect
+  with `/live connect`. Partners of the same run share one post. Won runs now go there instead of #live-runs.
+- **Rare Candies in the 3DS games on Windows** (thanks to a player on Discord for the report). "Add 99 Rare Candies"
+  found the bag but said "The game's memory couldn't be changed." The 3DS player looked for the bag's place in the
+  emulator's memory by its content, and on Windows it only searched part of that memory – the part the bag isn't in.
+  souldew's build of the 3DS emulator now writes the bytes itself, at the address the game uses, on every system and
+  for every game (X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon, Ultra Sun/Ultra Moon) – still only into the game's heaps
+  and only after the same checks as before. The messages are clearer too: when a game's bag isn't where its version
+  keeps it, souldew says so, and "the game changed your bag just then" has its own message.
+- **Smooth sound while fast-forwarding in the 3DS player** (thanks to a player on Discord for the report). On PCs where
+  a 3DS game can't hold the chosen speed steadily – its speed swings from moment to moment, which is normal for 3DS
+  games – "Sped-up original" and "Plain" stuttered (around ten little gaps a second) and sounded harsh, and "Music
+  continues" could play the music at the wrong pitch and tempo when nothing had been recorded for it yet. The 3DS player
+  now resamples the game's sound to exactly real time while fast-forwarding, filters it properly before speeding it up,
+  and tells the turbo mixer exactly how much it was sped up, so it can slow the music back down to normal pitch and
+  tempo. Measured with Pokémon Sun at 2×, 3×, 4× and Max, with the game slowed down the way a busier PC slows it: the
+  gaps went from 3–11 a second to almost none, and "Music continues" stays at normal pitch. At 1× the 3DS player now
+  runs at the 3DS's own frame rate (59.83 instead of 60 frames a second), so its sound no longer slowly runs ahead and
+  skips about once a minute.
+- **Modern Emerald is tracked live – and its trophies count** (thanks to a player on Discord for the report). Nothing
+  was read in this hack: no team, no catches, no battles, no badges – and so no achievements either. Modern Emerald is
+  rebuilt from the Emerald source with things of its own in memory, so its team, its save data and its battle flag
+  aren't where they are in Emerald. souldew now finds them from the game's own code and memory instead of assuming
+  Emerald's addresses: the team, catches (also when they go to the PC – its 15 boxes), wild and trainer battles,
+  badges and the level caps that follow them, and the cheats menu's Rare Candies. Checked in the game with version 3.6
+  (Torchic, the Zigzagoon battle, a real catch on Route 101, a badge → cap 19); older versions (1.5.6 – 3.3.1) are read
+  the same way. The same search now covers other hacks rebuilt from the Emerald or FireRed source whose memory moved.
+  The level caps of hacks with a block of text right in front of the trainer table are read again (every trainer
+  was numbered one too high).
+
+## 2.7.2
+
+- **Fast-forward steps one at a time in the 3DS player** (thanks to a player on Discord for the report). Plus went 2× →
+  3× → 4×, but minus at 4× dropped straight to 1×, and after a while plus jumped from 1× to 4×. The 3DS player measured
+  fast-forward by the pictures it got – and while fast-forwarding the game only sends some of them – so every step looked
+  like 1× to souldew, which then stopped offering 2× and 3×. It now counts the frames the game really ran, like the fast
+  player: 1×, 2×, 3×, 4× (and Max, when switched on) up and down – on the toolbar, with T, the menu and the controller.
+  What was measured wrongly before is forgotten.
+- **Sound while fast-forwarding in the 3DS player** (thanks to a player on Discord for the report). It was always silent;
+  now Turbo audio works there as in the other players: "Music continues" keeps the music going at normal speed,
+  "Sped-up original" and "Plain" play the game's own sound sped up, "Mute" stays silent.
+- **3DS resolution: 1×, 2× or 3×** (#59 – thanks to @Never-lab for the write-up). New setting in Settings › Emulators:
+  the built-in 3DS player draws the games at two or three times their own resolution – sharper and less pixelated, but
+  more work for the graphics card. 1× stays the default; it applies to the next 3DS game you start. The Software renderer
+  always plays at 1×, and when "Automatic" has to step down to a safer renderer after a crash, it goes back to 1× too.
+  The screen layout menu also has "Smooth picture" (softer scaling instead of crisp pixels), switchable while playing.
+- **Rare Candies for the 3DS games.** The cheats menu's "Add 99 Rare Candies" now works in souldew's own 3DS player
+  too – X/Y, Omega Ruby/Alpha Sapphire, Sun/Moon and Ultra Sun/Ultra Moon (asked for by an Ultra Moon player). They go
+  into the Medicine pocket, onto the candies you carry or into the first free slot, up to 999. As before: only when the
+  run's rules allow cheats, every use shows up in the run's log and counts for the trophies, and souldew checks first
+  that it really found the bag – if anything looks off, nothing is written. Checked in Sun; X/Y, ORAS and Ultra Sun/Ultra
+  Moon use the bag addresses known from other 3DS tools. Not when a 3DS game opens in the Azahar app.
+
 ## 2.7.1
 
 - **Catches sent to the PC are tracked in the Gen 3 games** (#61 – thanks to BigPhitty for the report). With a full

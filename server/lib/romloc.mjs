@@ -11,7 +11,7 @@ import { join, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
 import zlib from 'node:zlib';
-import { romLocations, gen3MapTable } from '../../shared/live/romloc.mjs';
+import { romLocations, gen3MapTable, gen3RamMoved } from '../../shared/live/romloc.mjs';
 import { romSpecies, gen3ItemNames, gen3MoveNames, gen3MoveMap } from '../../shared/live/romspecies.mjs';
 import { romTypes } from '../../shared/live/romtypes.mjs';
 import { romCaps } from '../../shared/live/romcaps.mjs';
@@ -24,7 +24,7 @@ import { isCtrExt } from '../../shared/romid.mjs';
 import { identifyCtr } from '../../shared/ctr.mjs';
 import { ctrZonePlaces } from '../../shared/live/ctrzones.mjs';
 
-const VERSION = 15; // bump when romData() / ctrData() change what they find or the shape of the result (13: types and level caps from the ROM, 14: 3DS zone tables, 15: their header)
+const VERSION = 16; // bump when romData() / ctrData() change what they find or the shape of the result (13: types and level caps from the ROM, 14: 3DS zone tables, 15: their header, 16: Gen 3 hacks with moved RAM, badge flags by the leaders' order)
 const memo = new Map();
 let tables = null;
 
@@ -65,8 +65,15 @@ export function romData(u8, sharedDir) {
   const data = romLocations(u8, o);
   if (data) data.vanilla = vanilla;
   const species = romSpecies(u8, o);
-  // an expanded GBA engine moved gMapHeader: the place comes from SaveBlock1's map and the ROM's map table instead
+  // an expanded GBA engine moved gMapHeader: the place comes from SaveBlock1's map and the ROM's map table instead.
+  // So did a decomp hack that kept the retail species but added variables of its own (its code never names the base
+  // game's gPlayerParty): its team is searched for like an expanded engine's (`moved`, web/views/play.mjs)
   if (data && species?.engine === 'expanded') data.maps3 = gen3MapTable(u8);
+  else if (data && species && !vanilla) {
+    const h = identifyRom(u8.subarray(0, 0x200));
+    const entry = h?.system === 'gba' ? findEntry(o.addresses, { platform: 'gba', code: h.code, title: h.title }) : null;
+    if (entry?.gen === 3 && gen3RamMoved(u8, entry)) data.maps3 = { ...gen3MapTable(u8), moved: true };
+  }
   // an expanded engine numbers its items and moves its own way (Complete FireRed Upgrade: Unbound, Radical Red): the
   // game's item names (held items by name) and its moves in the app's numbering (the battle helper's moves)
   const own = species?.engine === 'expanded' ? ownTables3(u8, o) : { items: null, moves: null };

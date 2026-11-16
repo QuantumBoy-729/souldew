@@ -66,8 +66,8 @@ jobs:
       - name: The host starts and loads the core
         run: |
           set +e
-          tools/ctr/linux-x64/ctrhost; test $? -eq 2 # usage
-          nm -D tools/ctr/linux-x64/azahar_libretro.so | grep -E ' T (retro_run|souldew_read_memory|souldew_title_id)$'
+          tools/ctr/linux-x64/ctrhost; test $? -eq 2 || exit 1 # usage
+          for s in retro_run souldew_read_memory souldew_write_memory souldew_title_id; do nm -D tools/ctr/linux-x64/azahar_libretro.so | grep -E " T $s\$" || exit 1; done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ctr-linux-x64
@@ -125,7 +125,7 @@ jobs:
         run: |
           node scripts/build-ctr.mjs --platform win32-x64 --check
           sudo apt-get install -y --no-install-recommends binutils-mingw-w64-x86-64 >/dev/null 2>&1 || true
-          x86_64-w64-mingw32-objdump -p tools/ctr/win32-x64/azahar_libretro.dll | grep -E 'souldew_read_memory|souldew_title_id'
+          for s in souldew_read_memory souldew_write_memory souldew_title_id; do x86_64-w64-mingw32-objdump -p tools/ctr/win32-x64/azahar_libretro.dll | grep -w "$s" || exit 1; done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ctr-win32-x64

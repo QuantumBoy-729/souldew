@@ -15,7 +15,7 @@ import { HostCode } from './invitecode.mjs';
 import { RestartModal } from './restart.mjs';
 import { useStreamer } from '../lib/streamer.mjs';
 import { NuzlockeRules, Choice, TypeHelpRule } from './nuzrules.mjs';
-import { ShareButton } from './liveshare.mjs';
+import { ShareButton, HallOfFame } from './liveshare.mjs';
 import { deathEvent } from '../lib/liveshare.mjs';
 
 
@@ -197,7 +197,8 @@ function BoardHead({ counts: c }) {
     ${st && html`<div class=${`run-banner ${st.state}`} role="status">
       <${Icon} name=${st.state === 'won' ? 'heart' : st.state === 'failed' ? 'grave' : 'pause'} size=${28} />
       <div class="grow"><b>${{ failed: t('end.bannerFailed', 'This run has failed'), won: t('end.bannerWon', 'You made it – run won!'), ended: t('end.bannerEnded', 'This run has ended') }[st.state] || st.state}</b>
-        <div class="small muted">${[endReason(st), names[st.by]?.name, ago(st.at), st.note].filter(Boolean).join(' · ')}</div></div>
+        <div class="small muted">${[endReason(st), names[st.by]?.name, ago(st.at), st.note].filter(Boolean).join(' · ')}</div>
+        ${st.state === 'won' && html`<${HallOfFame} status=${st} compact />`}</div>
       ${st.state !== 'won' && html`<button class="btn primary small" onClick=${() => setModal('restart')}
         title=${solo ? t('end.restartHintSolo', 'A new attempt with the same settings and rules – with a new randomizer seed.') : t('end.restartHint', 'A new run with the same settings and a new randomizer seed – the others are invited.')}><${Icon} name="reset" size=${14} />${t('end.restart', 'New attempt …')}</button>`}
       <button class="btn small ghost" onClick=${() => resumeRun(doc, me)} title=${t('over.resumeHint', 'Undo: the run goes on as before, tracking resumes.')}>${t('end.resume', 'Play on after all')}</button>

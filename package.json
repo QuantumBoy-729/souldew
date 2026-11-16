@@ -1,6 +1,6 @@
 {
   "name": "souldew",
-  "version": "2.7.1",
+  "version": "2.7.4",
   "private": true,
   "description": "souldew – Pokémon SoulLinks (2–4 players) and Nuzlockes with a built-in emulator, live sync and a game library",
   "license": "GPL-3.0-or-later",
@@ -17,7 +17,7 @@
   "scripts": {
     "start": "node server/index.mjs",
     "app": "electron .",
-    "test": "node --test \"test/*.test.mjs\"",
+    "test": "node --test --test-timeout=600000 \"test/*.test.mjs\"",
     "lint": "eslint .",
     "jre": "node scripts/fetch-jre.mjs arm64",
     "jre:win": "node scripts/fetch-jre.mjs x64",

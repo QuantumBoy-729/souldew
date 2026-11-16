@@ -326,6 +326,9 @@ export class TurboMixer {
     this.info = {};
     this.ratio = 1; // the speed asked for
     this.real = 0; // the speed the emulator really reaches (measured by the page; 0 = not yet known)
+    // The 3DS host says itself by how much it sped the sound up ({ type: 'rate', exact: true } – the worklet hands it
+    // over when that sound plays): then that ratio is the one to slow down by, as it is, until the host says otherwise.
+    this.exact = false;
     // DeSmuME: RetroArch runs without audio_fastforward_speedup there (player.html), so its fast-forward sound is
     // the classic one – the song at normal pitch, in pieces, skipping ahead. Nothing to slow down: it is played as
     // it is (with the jumps smoothed), unless a loop or music bed recorded at 1× is there to play instead.
@@ -445,7 +448,7 @@ export class TurboMixer {
     if (m.type === 'speed') {
       const change = this.turbo && m.ratio > 1 && m.ratio !== this.ratio;
       if (m.ratio > 1) this.ratio = m.ratio;
-      this.real = 0; // a new step: the old measurement doesn't hold
+      if (!this.exact) this.real = 0; // a new step: the old measurement doesn't hold (the host's own ratio does)
       this.setTurbo(m.ratio > 1);
       if (change) this.speedChange();
     } else if (m.type === 'mode' && TURBO_MODES.includes(m.mode)) {
@@ -464,6 +467,11 @@ export class TurboMixer {
       this.skip = !!m.on;
       this.retarget();
     } else if (m.type === 'rate') {
+      if (m.exact) {
+        if (m.ratio >= 1) [this.real, this.exact] = [m.ratio, true];
+        return;
+      }
+      if (this.exact) return; // (the host's own ratio beats the page's measurement)
       // the measured speed: a machine that can't hold 4× (≈2.7×) gives sound sped up 2.7×, not 4×
       if (this.turbo && m.ratio > 0) this.real = this.real ? this.real * 0.7 + m.ratio * 0.3 : m.ratio; // (measurement noise)
     } else if (m.type === 'song') {
@@ -700,6 +708,7 @@ export class TurboMixer {
 
   /** The speed the sped-up sound really has: the measured one when known (never above the requested step). */
   get rate() {
+    if (this.exact) return this.real;
     // within 5 % of the step it is the step (no wobble from measurement noise when the speed holds)
     return this.real > 1 && this.real < this.ratio * 0.95 ? this.real : this.ratio;
   }

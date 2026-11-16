@@ -1,7 +1,8 @@
 import { html, useState } from '/vendor/htm-preact.mjs';
-import { useApp, saveDiagnostics } from '../lib/ui.mjs';
+import { useApp, saveDiagnostics, openExternal } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
-import { t } from '../lib/i18n.mjs';
+import { t, currentLang } from '../lib/i18n.mjs';
+import { LINKS } from '../lib/links.mjs';
 import { resolve as resolveControls, keyLabel } from '../lib/controls.mjs';
 import { shortcut, IS_TOUCH } from '../lib/platform.mjs';
 
@@ -101,6 +102,10 @@ export function GuideView() {
       <details><summary>${t('faq.q7', 'Something doesn’t work right (music, live tracking)?')}</summary><div class="stack" style="margin-top:8px">
         <p class="prose small muted">${t('faq.a7', 'Right after it happens, save the diagnostics and send the file along with what you did. It holds what souldew read from the game and decided this session (song numbers, levels, what the turbo sound played) – no ROM, save file or invite.')}</p>
         <div class="row"><button class="btn small" onClick=${() => saveDiagnostics()}><${Icon} name="save" size=${14} />${t('play.diag', 'Save diagnostics')}</button></div></div></details>
+      <details><summary>${t('faq.q8', 'Does souldew send anything about me?')}</summary><div class="stack" style="margin-top:8px">
+        <div class="prose small muted"><p>${t('faq.a8a', 'No account, no analytics. The only thing souldew reports by itself is an anonymous “playing now” heartbeat for the player count on the souldew Discord: while a game runs, once a minute, the system (GB, GBA, DS, 3DS), solo / Nuzlocke / SoulLink, the app version and a random id that is new for every game. No name, no game title, no run, no ROM – and the IP address isn’t stored.')}</p>
+          <p>${t('faq.a8b', 'Don’t want to be counted? Switch off “Count me in ‘playing now’” in Settings › General – it stops right away.')}</p></div>
+        <div class="row"><button class="btn small" onClick=${() => openExternal(currentLang() === 'de' ? LINKS.privacy : LINKS.privacyDocs)}><${Icon} name="external" size=${14} />${t('set.presenceMore', 'What exactly is sent')}</button></div></div></details>
     </section>`}
   </div>`;
 }

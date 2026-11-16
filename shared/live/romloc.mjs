@@ -222,7 +222,33 @@ export function gen3MapTable(rom) {
     if (v >= 0x03000000 && v < 0x03008000 && (v & 3) === 0) count.set(v, (count.get(v) || 0) + 1);
   }
   const iwram = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 16).map(([v]) => v);
-  return { mapsec, iwram, party3: partyPair(rom), gMain: gMainOf(rom), offset: table };
+  return { mapsec, iwram, party3: partyPair(rom), gMain: gMainOf(rom), flags3: gen3FlagsAt(rom, iwram), offset: table };
+}
+
+/**
+ * Where SaveBlock1 keeps the event flags, from the code: GetFlagPointer (and the FlagGet/FlagSet it is inlined into)
+ * loads gSaveBlock1Ptr and the offset of `flags` from one literal pool, next to the bound of the special flags (0x3FFF
+ * in the retail build, -0x4000 and gSpecialFlags in a newer compiler's). Retail Emerald: 0x1270 behind 0x03005D8C;
+ * Modern Emerald grew SaveBlock1 in front of them: 0x1364 behind 0x030036F0 (both measured). `iwram`: the IWRAM
+ * addresses the code names most (gSaveBlock1Ptr among them). → { sb1Ptr, flags } (the pair seen most) or null.
+ */
+export function gen3FlagsAt(rom, iwram = []) {
+  const top = new Set(iwram);
+  const count = new Map();
+  for (let o = 12; o + 16 <= rom.length; o += 4) {
+    const p = u32(rom, o);
+    if (!top.has(p)) continue;
+    const near = (d) => u32(rom, o + d);
+    if (![-12, -8, -4, 4, 8].some((d) => near(d) === 0x3fff || near(d) === 0xffffc000)) continue;
+    for (const d of [-4, 4]) {
+      const c = near(d);
+      if (c >= 0x800 && c < 0x8000 && c !== 0x3fff) count.set(`${p}:${c}`, (count.get(`${p}:${c}`) || 0) + 1);
+    }
+  }
+  const [best, second] = [...count.entries()].sort((a, b) => b[1] - a[1]);
+  if (!best || (second && second[1] === best[1])) return null;
+  const [sb1Ptr, flags] = best[0].split(':').map(Number);
+  return { sb1Ptr, flags };
 }
 
 /**
@@ -245,7 +271,7 @@ export function gMainOf(rom) {
 
 /**
  * gPlayerParty and gEnemyParty of an expanded Gen 3 engine, from the code: two EWRAM addresses 600 bytes apart (six
- * 100-byte structs) among the ones its literal pools hold most often – the pair used most, the player's party the
+ * 100-byte structs, or twelve with another party array between them) among the ones its literal pools hold most often – the pair used most, the player's party the
  * busier of the two (Too Many Types 2: 0x02032C94 577 times, gEnemyParty 0x02032A3C 275 times). → { player, enemy } or
  * null. Only a hint: the live reader takes it when the RAM there holds a team (parse.mjs findGen3Party).
  */
@@ -257,12 +283,31 @@ export function partyPair(rom) {
   }
   const top = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 64);
   let best = null;
-  for (const [a, n] of top) {
-    const m = count.get(a + 600) || 0;
-    if (m < 20 || !top.some(([v]) => v === a + 600)) continue;
-    if (!best || n + m > best.n) best = { n: n + m, player: n >= m ? a : a + 600, enemy: n >= m ? a + 600 : a };
+  // (two arrays apart: Modern Emerald keeps gPlayerPartyBackup between the two – named twice, the parties 600 and 205
+  // times)
+  for (const gap of [600, 1200]) {
+    for (const [a, n] of top) {
+      const m = count.get(a + gap) || 0;
+      if (m < 20 || !top.some(([v]) => v === a + gap)) continue;
+      if (!best || n + m > best.n) best = { n: n + m, player: n >= m ? a : a + gap, enemy: n >= m ? a + gap : a };
+    }
   }
   return best ? { player: best.player, enemy: best.enemy } : null;
+}
+
+/**
+ * Did a Gen 3 ROM move the base game's RAM? The retail code names gPlayerParty (addresses.json `partyAddr`) in hundreds
+ * of literal pools (Emerald 1,091 times), and so does a binary hack built on it (Light Platinum, Emerald Kaizo). A hack
+ * rebuilt from the pret disassembly with variables of its own (Modern Emerald: gPlayerParty 0x0201D9CC instead of
+ * 0x020244EC, gSaveBlock1Ptr and gMain moved too) names it a handful of times at most – its team, its save blocks and
+ * its battle flag have to be found instead of read at the retail addresses.
+ */
+export function gen3RamMoved(rom, entry) {
+  const at = typeof entry?.partyAddr === 'string' ? parseInt(entry.partyAddr, 16) : Number(entry?.partyAddr);
+  if (!(at >= 0x02000000 && at < 0x02040000)) return false;
+  let n = 0;
+  for (let o = 0; o + 4 <= rom.length; o += 4) if (u32(rom, o) === at && ++n >= 16) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------- Gen 4 (DS)

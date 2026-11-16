@@ -1,5 +1,5 @@
 // The 3DS player (player3ds.html): the game runs in souldew's native host (server/lib/ctr.mjs, native/ctr-host) and
-// arrives here as a stream of pictures, sound and memory; input, speed and save states go back. It offers the Play
+// arrives here as a stream of pictures, sound and memory; input, speed, save states and cheats go back. It offers the Play
 // view the same window.__emu as player.html (EmulatorJS) – save states, speed, screenshots, the partner's mini view
 // and the live reader work the same way. 3DS saves aren't one battery file: they live in the host's save folder of the
 // game / run slot (server side), so getSave() has nothing to hand over.
@@ -7,19 +7,21 @@ import * as controls from '/lib/controls.mjs';
 import { setLang, guessLang, t } from '/lib/i18n.mjs';
 import { serverErrorText } from '/lib/errors.mjs';
 import { findEntry, regionsFor } from '/shared/live/parse.mjs';
+import { cheatRegions } from '/shared/live/cheats.mjs';
 import { CTR_LAYOUTS, ctrLayout, ctrTouchAt } from '/shared/ctrlayout.mjs';
 import { mountPad, isTouchScreen } from '/lib/ctrpad.mjs';
 
 const q = new URLSearchParams(location.search);
 const MSG = { VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7 };
-const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8 };
+const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8, WRITE: 9 };
 const post = (m) => window.parent?.postMessage(m, location.origin);
 
 const st = {
   id: null, ready: false, paused: false, speed: 1, volume: 1, frames: 0, fps: 0, title: null, width: 400, height: 480,
-  mem: [], watching: '', liveMemory: false, error: null, log: [], renderer: null,
+  mem: [], watching: '', liveMemory: false, error: null, log: [], renderer: null, turboAudio: 'music',
+  hostFrame: 0, hostFrames: false, hostSpeed: 0, // the host's count of emulated frames and its real speed (stats event)
 };
-const waiters = { state: [], loaded: [] };
+const waiters = { state: [], loaded: [], written: new Map() }; // written: write id → resolve
 
 // ---- commands -----------------------------------------------------------------------------------------------------
 // One request at a time, and what comes meanwhile goes along with the next one (the server takes several framed
@@ -84,7 +86,6 @@ function ask(list, type, payload, fallback, map = (x) => x) {
   });
 }
 const f32 = (x) => new Uint8Array(new Float32Array([x]).buffer);
-const u32 = (x) => new Uint8Array(new Uint32Array([x]).buffer);
 
 // ---- picture (WebGL: the host sends BGRA or RGBA rows, top row first) -------------------------------------------
 // The core always renders its default layout (top screen above the bottom one, 400×480 at 1×). The page arranges the
@@ -96,6 +97,17 @@ let tex = null;
 let swizzleLoc = null;
 let quadBuf = null;
 let layoutId = CTR_LAYOUTS.includes(q.get('layout')) ? q.get('layout') : 'tb';
+// "Smooth picture" (the play view's screen layout menu): the screens scaled with linear filtering instead of crisp
+// pixels – both where the page draws a screen smaller or larger (the layouts) and where the frame scales the canvas
+let smooth = q.get('smooth') === '1';
+function applyFilter() {
+  canvas.style.imageRendering = smooth ? 'auto' : 'pixelated';
+  if (!gl || !tex) return;
+  const f = smooth ? gl.LINEAR : gl.NEAREST;
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f);
+}
 function initGl() {
   const vs = '#version 300 es\nin vec2 p;in vec2 t;out vec2 uv;void main(){uv=t;gl_Position=vec4(p,0.,1.);}';
   const fs = '#version 300 es\nprecision mediump float;in vec2 uv;uniform sampler2D s;uniform bool bgra;out vec4 o;void main(){vec4 c=texture(s,uv);o=vec4(bgra?c.bgr:c.rgb,1.);}';
@@ -120,8 +132,7 @@ function initGl() {
   gl.vertexAttribPointer(tloc, 2, gl.FLOAT, false, 16, 8);
   tex = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  applyFilter();
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   swizzleLoc = gl.getUniformLocation(prog, 'bgra');
@@ -197,19 +208,50 @@ addEventListener('resize', layout);
 new ResizeObserver(layout).observe(document.body);
 layout();
 
-// ---- sound ----------------------------------------------------------------------------------------------------------
-const audio = { ctx: null, node: null, gain: null, rate: 0, started: false };
+// ---- sound: the host's samples through souldew's turbo mixer (lib/native-audio-worklet.mjs, as the fast player) -----
+// While fast-forwarding the host sends the sound sped up by the real speed, resampled to real time (ctrhost.c
+// ff_frame), and says by how much ("ffrate", right before that sound – the worklet hands the ratio to the mixer when the
+// sound plays); the mixer then plays what Settings › "Turbo audio" asks for: the music recorded at 1× going on
+// ("music"), silence ("mute"), the sped-up original ("original"), or the host's sound with no mixer at all ("plain").
+// The worklet keeps a little more in hand than for the fast player: the sound comes between pictures of up to 7 MB.
+const MAX_SOUND_RATIO = 16; // the host speeds its fast-forward sound up at most this much
+const audio = { ctx: null, node: null, gain: null, key: null, events: [], probes: [], rate: 0, exact: false };
+/**
+ * The worklet's buffer (frames): start / restart once 60 ms are there, fold the excess in gently above 200 ms (only if
+ * the sound runs ahead of the sound card's clock for long – ctrhost paces 1× by the core's sound), never over 400 ms.
+ */
+const ringFor = (rate) => ({ prime: Math.round(rate * 0.06), trim: Math.round(rate * 0.2), maxLag: Math.round(rate * 0.4) });
+function tellAudio(m) {
+  audio.node?.port.postMessage(m);
+}
+const audioInit = () => [
+  { type: 'mode', mode: st.turboAudio },
+  { type: 'paused', paused: st.paused },
+  ...(audio.key ? [{ type: 'song', key: audio.key }] : []),
+  { type: 'speed', ratio: Math.min(st.speed, MAX_SOUND_RATIO) },
+];
 async function startAudio(rate) {
-  if (audio.ctx || !rate) return;
+  if (audio.ctx || !rate || q.get('audio') === '0') return; // (?audio=0: no sound at all – diagnostics)
   try {
     audio.rate = rate;
     audio.ctx = new AudioContext({ sampleRate: Math.round(rate), latencyHint: 'interactive' });
-    await audio.ctx.audioWorklet.addModule('/lib/ctr-audio-worklet.mjs');
-    audio.node = new AudioWorkletNode(audio.ctx, 'ctr-sink', { outputChannelCount: [2] });
+    await audio.ctx.audioWorklet.addModule('/lib/native-audio-worklet.mjs');
+    audio.node = new AudioWorkletNode(audio.ctx, 'native-audio', { outputChannelCount: [2], processorOptions: { init: audioInit(), ...ringFor(audio.ctx.sampleRate) } });
+    audio.node.port.onmessage = (e) => {
+      const ev = e.data?.e;
+      if (!ev) return;
+      if (ev.type === 'error') st.log.push(`turbo audio: ${ev.message}`);
+      if (ev.type === 'probe') audio.probes.splice(0).forEach((f) => f(ev));
+      if (ev.type === 'state' || ev.type === 'error') {
+        audio.events.push({ t: Math.round(performance.now()), ...ev });
+        if (audio.events.length > 40) audio.events.shift();
+      }
+    };
     audio.gain = audio.ctx.createGain();
     audio.gain.gain.value = st.volume;
     audio.node.connect(audio.gain).connect(audio.ctx.destination);
     audio.ctx.resume().catch(() => {});
+    for (const m of audioInit()) tellAudio(m); // (the state may have changed while the module loaded)
   } catch (e) {
     st.log.push(`audio: ${e.message}`);
   }
@@ -226,14 +268,14 @@ function onAudio(p) {
   audio.node.port.postMessage(f, [f.buffer]);
 }
 
-// ---- memory (the regions the live reader needs, ten times a second) -------------------------------------------------
+// ---- memory (the regions the live reader needs – and the bag for the cheats – ten times a second) ---------------------
 let addresses = null;
 let extraRegions = []; // __emu.watch(): more regions on top of the game's (diagnostics, research)
 async function watchFor(titleId) {
   try {
     addresses ||= await fetch('/shared/data/addresses.json').then((r) => r.json());
     const entry = titleId ? findEntry(addresses, { platform: '3ds', titleId }) : null;
-    const regions = [...(entry ? regionsFor(entry) : []), ...extraRegions].slice(0, 16);
+    const regions = [...(entry ? [...regionsFor(entry), ...cheatRegions(entry)] : []), ...extraRegions].slice(0, 16);
     const sig = regions.map((r) => `${r.addr}:${r.len}`).join();
     if (sig === st.watching) return;
     st.watching = sig;
@@ -268,6 +310,38 @@ function read(addr, len) {
   return null;
 }
 
+// A cheat: a few bytes inside the memory souldew watches (never anywhere else), written by the host between two frames
+// – and only while the game still holds what souldew read there (the host compares). Resolves true once written (the
+// copy here has it too); { ok: false, why } when the host refused (its reason: ctrhost.c mem_write); false when it
+// never reached the host or no answer came.
+let writeId = 0;
+function write(addr, bytes) {
+  const len = bytes?.length || 0;
+  if (!st.liveMemory || st.ended || !st.id || !len || len > 256 || (addr & 0xfff) + len > 0x1000) return Promise.resolve(false);
+  const old = read(addr, len);
+  if (!old) return Promise.resolve(false);
+  const id = ++writeId;
+  const p = new Uint8Array(12 + 2 * len);
+  const v = new DataView(p.buffer);
+  v.setUint32(0, id, true);
+  v.setUint32(4, addr >>> 0, true);
+  v.setUint32(8, len, true);
+  p.set(old, 12);
+  p.set(bytes, 12 + len);
+  const val = Uint8Array.from(bytes);
+  return new Promise((res) => {
+    const done = (ok, why) => {
+      if (!waiters.written.delete(id)) return;
+      clearTimeout(timer);
+      if (ok) read(addr, len)?.set(val); // (the next memory message brings the same)
+      res(ok ? true : why ? { ok: false, why: String(why) } : false);
+    };
+    const timer = setTimeout(() => done(false), 5000);
+    waiters.written.set(id, done);
+    cmd(CMD.WRITE, p).then((sent) => sent || done(false));
+  });
+}
+
 // ---- events ---------------------------------------------------------------------------------------------------------
 function onEvent(p) {
   let e;
@@ -286,8 +360,26 @@ function onEvent(p) {
   } else if (e.event === 'title') {
     st.title = e.titleId;
     if (!/^0+$/.test(e.titleId)) watchFor(e.titleId);
-  } else if (e.event === 'stats') st.fps = e.fps;
+  } else if (e.event === 'stats') {
+    st.fps = e.fps;
+    if (Number.isFinite(e.speed)) st.hostSpeed = e.speed;
+    if (Number.isFinite(e.frame)) {
+      st.hostFrame = e.frame;
+      st.hostFrames = true;
+    }
+    // the sped-up sound's real speed, for the mixer to slow it down again (as the fast player) – unless the host says
+    // its exact ratio itself (ffrate)
+    if (!audio.exact && st.speed > 1 && !st.paused && e.speed > 0.5) tellAudio({ type: 'rate', ratio: Math.round(Math.min(e.speed, MAX_SOUND_RATIO) * 100) / 100 });
+  } else if (e.event === 'ffrate') {
+    if (!(e.k >= 1)) return;
+    audio.exact = true;
+    tellAudio({ type: 'rate', ratio: e.k, exact: true, inband: true });
+  }
   else if (e.event === 'stateLoaded') waiters.loaded.splice(0).forEach((f) => f(!!e.ok));
+  else if (e.event === 'written') {
+    if (!e.ok) st.log.push(`write ${Number(e.addr || 0).toString(16)}: ${e.why}`);
+    waiters.written.get(e.id)?.(!!e.ok, e.why);
+  }
   else if (e.event === 'error') {
     st.error = e.message;
     showError(t('ctr.failed', 'The 3DS game can’t run: {why}', { why: e.message }));
@@ -352,6 +444,7 @@ async function pump() {
   st.ended = true;
   waiters.state.splice(0).forEach((f) => f(null));
   waiters.loaded.splice(0).forEach((f) => f(false));
+  [...waiters.written.values()].forEach((f) => f(false));
   if (st.error) return;
   // how the host ended (a crash in the graphics driver shows only as an exit code): asked before the page closes it
   let why = '';
@@ -513,32 +606,42 @@ window.__emu = {
   locateRam() {},
   ramInfo: () => ({ base: st.liveMemory && st.mem.length ? 0 : -1, tried: 0 }),
   read,
-  write: null, // no cheats for 3DS games
+  /** A cheat (shared/live/cheats.mjs): a Promise – the host writes between two frames. */
+  write,
   paused: () => st.paused,
   pause() {
     st.paused = true;
     cmd(CMD.SPEED, f32(0));
+    tellAudio({ type: 'paused', paused: true });
   },
   resume() {
     st.paused = false;
     cmd(CMD.SPEED, f32(st.speed === Infinity ? 1000 : st.speed));
+    tellAudio({ type: 'paused', paused: false });
   },
   togglePause() {
     if (st.paused) this.resume();
     else this.pause();
   },
-  restart: () => cmd(CMD.RESET),
-  /** 1–4, or Infinity: as fast as this computer can. */
+  restart: () => {
+    tellAudio('clear');
+    tellAudio({ type: 'cut' });
+    return cmd(CMD.RESET);
+  },
+  /** 1–4, or Infinity: as fast as this computer can. (In fast-forward the host sends about 60 pictures a second.) */
   setSpeed(ratio) {
     st.speed = ratio === Infinity ? Infinity : Math.max(1, Number(ratio) || 1);
     if (!st.paused) cmd(CMD.SPEED, f32(st.speed === Infinity ? 1000 : st.speed));
-    // fast-forward: every 2nd–4th picture is enough to see where you are (the host skips the others)
-    cmd(CMD.FRAMESKIP, u32(st.speed > 1 ? Math.min(4, Math.ceil(st.speed)) : 1));
-    if (st.speed > 1) audio.node?.port.postMessage('clear');
+    tellAudio({ type: 'speed', ratio: Math.min(st.speed, MAX_SOUND_RATIO) });
   },
   speed: () => st.speed,
-  setFullTurbo() {},
-  frames: () => st.frames,
+  setFullTurbo() {}, // the native host always runs fast-forward at full power
+  /**
+   * Emulated frames so far – the host's count (four times a second), not the pictures that arrived: in fast-forward
+   * the host sends only about 60 pictures a second, and counting those made every step look like 1× to the play view
+   * (lib/reach.mjs then offered only 1× and 4×).
+   */
+  frames: () => (st.hostFrames ? st.hostFrame : st.frames),
   fastForward: () => st.speed > 1,
   ffRatio: () => (st.speed > 1 ? st.speed : 3),
   /** A save state (the host serializes between two frames). */
@@ -548,7 +651,8 @@ window.__emu = {
   },
   loadState(u8) {
     if (st.ended) return Promise.resolve(false);
-    audio.node?.port.postMessage('clear');
+    tellAudio('clear');
+    tellAudio({ type: 'cut' });
     return ask(waiters.loaded, CMD.LOAD, u8 instanceof Uint8Array ? u8 : new Uint8Array(u8), false);
   },
   async screenshot() {
@@ -582,8 +686,29 @@ window.__emu = {
     if (audio.gain) audio.gain.gain.value = v;
   },
   muted: () => st.volume === 0,
-  setTurboAudio() {},
-  perf: () => ({ fps: st.fps, frames: st.frames, title: st.title, liveMemory: st.liveMemory, error: st.error, renderer: st.renderer, log: st.log.slice(-20) }),
+  /** What plays while fast-forwarding: 'music' | 'mute' | 'original' | 'plain' (as the fast player). */
+  setTurboAudio(mode) {
+    st.turboAudio = mode;
+    tellAudio({ type: 'mode', mode });
+  },
+  /** The music the game plays now (location.mjs musicKey), when the live reader knows it: the turbo mixer follows it. */
+  songKey(key) {
+    if (!key || key === audio.key) return;
+    audio.key = key;
+    tellAudio({ type: 'song', key });
+  },
+  /** The mixer's last state changes (diagnostics). */
+  turboAudio: () => ({ mode: st.turboAudio, key: audio.key, events: audio.events.slice(-10) }),
+  /** Tests: what the mixer plays right now ({ playing, turbo, key, … }), or null without sound. */
+  audioProbe() {
+    if (!audio.node) return Promise.resolve(null);
+    return new Promise((res) => {
+      audio.probes.push(res);
+      tellAudio({ type: 'probe' });
+      setTimeout(() => res(null), 2000);
+    });
+  },
+  perf: () => ({ fps: st.fps, speed: st.hostSpeed, frames: st.hostFrame, shown: st.frames, title: st.title, liveMemory: st.liveMemory, error: st.error, renderer: st.renderer, log: st.log.slice(-20) }),
   /** Tests / diagnostics: hold buttons by name (["a"], ["up", "b"] …) – what a controller would do. */
   hold(names = []) {
     inp.keys = names.reduce((m, n) => (n in BIT ? m | (1 << BIT[n]) : m), 0);
@@ -602,11 +727,15 @@ window.__emu = {
     sendInput();
   },
   title: () => st.title,
-  /** The screen layout (shared/ctrlayout.mjs CTR_LAYOUTS): applied to the next picture, no restart. */
+  /** The screen layout (shared/ctrlayout.mjs CTR_LAYOUTS) or the smooth filter: applied right away, no restart. */
   setOption(k, v) {
     if (k === 'ctr_layout' && CTR_LAYOUTS.includes(v)) {
       layoutId = v;
       if (inp.touch) lift();
+      drawFrame();
+    } else if (k === 'ctr_smooth') {
+      smooth = !!v;
+      applyFilter();
       drawFrame();
     }
   },
@@ -633,7 +762,8 @@ async function start() {
   }
   const res = await fetch('/api/ctr/start', {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-soullink': '1' },
-    body: JSON.stringify({ rom: q.get('rom'), key: q.get('key'), scale: Number(q.get('scale')) || 1 }),
+    // (no ?scale=: the server takes Settings › Emulators › "3DS resolution")
+    body: JSON.stringify({ rom: q.get('rom'), key: q.get('key'), ...(q.get('scale') ? { scale: Number(q.get('scale')) } : {}) }),
   });
   const j = await res.json().catch(() => ({}));
   if (!res.ok) return showError(serverErrorText(j, res.status), j.code || null);
@@ -646,6 +776,7 @@ async function start() {
     st.ended = true;
     waiters.state.splice(0).forEach((f) => f(null));
     waiters.loaded.splice(0).forEach((f) => f(false));
+    [...waiters.written.values()].forEach((f) => f(false));
     showError(t('ctr.failed', 'The 3DS game can’t run: {why}', { why: e.message }));
   });
 }

@@ -7,11 +7,12 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 import { PassThrough } from 'node:stream';
+import { fakeHostSpawn, killFakeHosts } from './fixtures/fakehosts.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'sls-ctrrenderer-'));
 test.after(() => rmSync(TMP, { recursive: true, force: true }));
+test.afterEach(killFakeHosts); // (a test that failed half way leaves its stand-in host running)
 process.env.SLS_DATA_DIR = TMP;
 const R = await import('../server/lib/ctrrenderer.mjs');
 const { CtrSessions, MSG, CMD, command, splitMessages } = await import('../server/lib/ctr.mjs');
@@ -64,6 +65,16 @@ test('which ends count as "this renderer can\'t run here": early crashes and Vul
   // after the first seconds, or stopped by souldew
   assert.equal(R.rendererFailure({ exit: { code: 3221225477 }, events: [crash], ms: R.RETRY_WINDOW_MS + 1 }), false);
   assert.equal(R.rendererFailure({ exit: { code: 3221225477 }, events: [crash], ms: 100, quit: true }), false);
+});
+
+test('3DS resolution (#59): 1×–3× or 1×; the Software renderer always 1×; --scale replaced or added', () => {
+  assert.deepEqual([1, 2, 3, 4, 0, '2', null, undefined, 2.5].map(R.validScale), [1, 2, 3, 1, 1, 1, 1, 1, 1]);
+  assert.equal(R.scaleFor(3, 'vulkan'), 3);
+  assert.equal(R.scaleFor(2, 'compat'), 2);
+  assert.equal(R.scaleFor(3, 'software'), 1);
+  assert.equal(R.scaleFor(9, 'vulkan'), 1);
+  assert.deepEqual(R.withArg(['--scale', '3', '--renderer', 'compat'], '--scale', 1), ['--scale', '1', '--renderer', 'compat']);
+  assert.deepEqual(R.withArg(['--rom', 'x'], '--scale', 2), ['--rom', 'x', '--scale', '2']);
 });
 
 test('the host\'s arguments get the renderer (replaced, or added)', () => {
@@ -127,7 +138,7 @@ const quietly = async (fn) => {
   }
 };
 const sessions = (env = {}) => {
-  const ctr = new CtrSessions({ spawn: (cmd, args, o) => spawn(process.execPath, ['-e', FAKE, '--', ...args], { ...o, env: { ...process.env, ...env } }) });
+  const ctr = new CtrSessions({ spawn: fakeHostSpawn(FAKE, env) });
   ctr.logFile = join(TMP, 'logs', 'players.log');
   return ctr;
 };
@@ -180,6 +191,29 @@ test('auto: commands the page sent before the step down reach the new host (WATC
     await until(() => p.messages().some((m) => m.text === 'cmd 8 vulkan'));
     assert.deepEqual(Object.keys(ctr.current.lastCmds).map(Number).sort(), [CMD.WATCH, CMD.FRAMESKIP].sort());
     ctr.stop();
+  });
+});
+
+test('auto: a step down after a crash at 3× resolution goes back to 1× as well (and software starts at 1×)', async () => {
+  await quietly(async () => {
+    const ctr = sessions({ FAKE_FAIL: 'vulkan' });
+    const id = ctr.start({ rom: 'r', key: 'k-scale', tools, renderer: 'vulkan', auto: true, scale: 3 });
+    assert.match(ctr.current.args.join(' '), /--scale 3/);
+    assert.equal(ctr.status().scale, 3);
+    const p = page();
+    ctr.attach(id, p.res);
+    await until(() => p.messages().some((m) => /"loaded"/.test(m.text) && /"compat"/.test(m.text)));
+    assert.match(ctr.current.args.join(' '), /--scale 1 /);
+    assert.doesNotMatch(ctr.current.args.join(' '), /--scale 3/);
+    assert.equal(ctr.status().scale, 1);
+    assert.equal(ctr.last.scale, 3, 'the failed try is logged with its resolution');
+    ctr.stop();
+    await until(() => ctr.current === null);
+    const sw = sessions({ FAKE_FAIL: 'none' });
+    sw.start({ rom: 'r', key: 'k-sw', tools, renderer: 'software', scale: 3 });
+    assert.match(sw.current.args.join(' '), /--scale 1 /);
+    sw.stop();
+    await until(() => sw.current === null);
   });
 });
 

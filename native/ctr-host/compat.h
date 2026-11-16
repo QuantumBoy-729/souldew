@@ -210,6 +210,28 @@ static char **compat_utf8_argv(int *argc, char **argv) {
   return out;
 }
 
+// The committed read-write memory at `p` (one region of the address space: same state and protection), or 0.
+static inline int compat_rw_region(uintptr_t p, uintptr_t *start, uintptr_t *end) {
+  MEMORY_BASIC_INFORMATION m;
+  if (!VirtualQuery((const void *)p, &m, sizeof m) || m.State != MEM_COMMIT || (m.Protect & (PAGE_GUARD | PAGE_NOACCESS))) return 0;
+  if (!(m.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))) return 0;
+  // VirtualQuery's region begins at p's own page, not where the pages with these attributes begin (as on macOS and
+  // Linux): that start is found by walking the allocation's regions from its base (2.7.2 searched only upwards here)
+  uintptr_t s = (uintptr_t)m.BaseAddress;
+  for (uintptr_t a = (uintptr_t)m.AllocationBase; a && a < s;) {
+    MEMORY_BASIC_INFORMATION r;
+    if (!VirtualQuery((const void *)a, &r, sizeof r) || !r.RegionSize) break;
+    if (a + r.RegionSize > s) { // the region that holds p's page – it begins here
+      s = a;
+      break;
+    }
+    a += r.RegionSize;
+  }
+  *start = s;
+  *end = (uintptr_t)m.BaseAddress + m.RegionSize;
+  return 1;
+}
+
 // time
 static double compat_now(void) {
   static LARGE_INTEGER freq;
@@ -231,6 +253,48 @@ static void compat_sleep(double s) {
 #include <pthread.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
+
+// The read-write memory at `p` (one region of the address space: same protection), or 0. macOS asks the kernel
+// (mach_vm_region); Linux reads /proc/self/maps.
+static inline int compat_rw_region(uintptr_t p, uintptr_t *start, uintptr_t *end) {
+#ifdef __APPLE__
+  mach_vm_address_t a = p;
+  mach_vm_size_t size = 0;
+  vm_region_basic_info_data_64_t info;
+  mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+  mach_port_t object = MACH_PORT_NULL;
+  if (mach_vm_region(mach_task_self(), &a, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object) != KERN_SUCCESS) return 0;
+  if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
+  if (a > p || (info.protection & (VM_PROT_READ | VM_PROT_WRITE)) != (VM_PROT_READ | VM_PROT_WRITE)) return 0;
+  *start = (uintptr_t)a;
+  *end = (uintptr_t)(a + size);
+  return 1;
+#else
+  FILE *f = fopen("/proc/self/maps", "r");
+  if (!f) return 0;
+  char line[512];
+  int found = 0;
+  while (fgets(line, sizeof line, f)) {
+    unsigned long long s, e;
+    char perms[8] = "";
+    if (sscanf(line, "%llx-%llx %7s", &s, &e, perms) != 3) continue;
+    if (p >= s && p < e) {
+      if (perms[0] == 'r' && perms[1] == 'w') {
+        *start = (uintptr_t)s;
+        *end = (uintptr_t)e;
+        found = 1;
+      }
+      break;
+    }
+  }
+  fclose(f);
+  return found;
+#endif
+}
 
 #include <signal.h>
 static int compat_trylock(pthread_mutex_t *m) { return pthread_mutex_trylock(m) == 0; }

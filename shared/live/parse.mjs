@@ -391,8 +391,11 @@ function findGen3Party(read, T, state, hint = null, base = null) {
     if (ram[o] === 0 && ram[o + 1] === 0 && ram[o + 2] === 0 && ram[o + 3] === 0) continue;
     if (base?.enemy === 0x02000000 + o) continue; // (FireRed's gEnemyParty, 3 bytes after the player's count)
     if (okAt(ram, o)) {
-      Object.assign(state, { count3: 0x02000000 + o - 3, enemy3: 0x02000000 + o + 600 });
-      return (state.party3 = 0x02000000 + o);
+      // gEnemyParty: where the code names it next to this party (Modern Emerald keeps another party array between the
+      // two), else right behind it as in the base game
+      const at = 0x02000000 + o;
+      Object.assign(state, { count3: at - 3, enemy3: hint?.player === at && hint.enemy ? hint.enemy : at + 600 });
+      return (state.party3 = at);
     }
   }
   // no count byte in front of a team: the pair the ROM's code names, if its player half holds a team (and nothing
@@ -424,8 +427,18 @@ function party3Count(read, T, state) {
  * with the ROM's own hints from romloc.mjs gen3MapTable `maps3` – the party pair its code names and gMain, whose
  * battle flag (+0x439, bit 1) moved in newer builds (Too Many Types 2: gMain 0x03004084 instead of 0x030022C0).
  */
-export function expandedEntry(entry, maps3 = null) {
-  const out = { ...entry, scan3: true, party3At: maps3?.party3 || null };
+export function expandedEntry(entry, maps3 = null, items = null) {
+  const out = { ...entry, scan3: true, party3At: maps3?.party3 || null, flags3: maps3?.flags3 || null };
+  // a build that kept the base game's save data: the retail species and items (a decomp hack with moved RAM, `moved`),
+  // or an Emerald build whose own item table still numbers Poké Ball 4 and Rare Candy 68 (Modern Emerald – Run & Bun and
+  // pokeemerald-expansion renumber them, Complete FireRed Upgrade moved the bag and packs the PC). Its bag and PC boxes
+  // sit where the base game keeps them in its save blocks – reached through the save block pointers the place reader
+  // found (cheats.mjs, readBoxesGen3). `items3Max`: the highest item number the game knows (bag check).
+  const name = (i) => String(items?.[i] || '').toUpperCase().replace('É', 'E');
+  if (maps3?.moved || (/^emerald_/.test(String(entry.id)) && name(4) === 'POKE BALL' && name(68) === 'RARE CANDY')) {
+    out.retail3 = true;
+    if (items?.length > 1) out.items3Max = items.length - 1;
+  }
   // the base game's addresses: tried first (Complete FireRed Upgrade kept them), checked like any other place
   if (entry.partyAddr && entry.partyCountAddr) out.party3Base = { party: hex(entry.partyAddr), count: hex(entry.partyCountAddr), enemy: entry.enemyPartyAddr ? hex(entry.enemyPartyAddr) : null };
   if (maps3?.gMain && entry.inBattle) out.inBattle = { ...entry.inBattle, addr: `0x${(maps3.gMain + 0x439).toString(16)}` };
@@ -481,37 +494,70 @@ function readGen3(entry, read, T, state = {}) {
  * keep it at a fixed place, Emerald and FireRed/LeafGreen behind gPokemonStoragePtr, right after the two save block
  * pointers (pret .sym files; the German, French, Italian and Spanish FireRed/LeafGreen: 0x03004F60, pokebot-gen3's
  * language patches). Without it a catch the game sent to the PC (full party) wasn't seen until it joined the team.
- * Only the retail engines: an expanded one may have moved or grown the boxes. Read every 2.5 s at most (like Gen 4);
+ * Only the retail engines and builds that kept their save data (expandedEntry `retail3`, every slot must read): an
+ * expanded one may have moved, grown or packed the boxes. Read every 2.5 s at most (like Gen 4);
  * null when the block doesn't read as a PC – mostly failed checksums is a wrong place, not a PC full of Bad Eggs.
  */
 const GBA_STORAGE = { rs: { at: 0x020300a0 }, e: { ptr: 0x03005d94 }, frlg: { ptr: 0x03005010 } };
-const BOX3_SLOTS = 14 * 30;
+/**
+ * How many boxes a hack's PC has (Modern Emerald 15): PokemonStorage goes on with a name per box (9 bytes, ended by
+ * 0xFF – "BOX1" …) and a wallpaper per box. The first count from 14 on whose names and wallpapers read as such – the
+ * names of a wrong count land in the boxes' encrypted or empty slots. null: none.
+ */
+function boxCount3(read, at) {
+  for (let n = 14; n <= 24; n++) {
+    const o = at + 4 + n * 30 * 80;
+    if (o + n * 10 > 0x02040000) return null;
+    const b = read(o, n * 10);
+    if (!b) return null;
+    let ok = true;
+    for (let k = 0; k < n && ok; k++) {
+      const name = b.subarray(k * 9, k * 9 + 9);
+      const end = name.indexOf(0xff);
+      ok = end >= 1 && name[0] !== 0 && name.subarray(0, end).every((c) => c < 0xf7); // (0x00: a space)
+    }
+    if (ok && b.subarray(n * 9, n * 10).every((w) => w < 32)) return n;
+  }
+  return null;
+}
 function readBoxesGen3(entry, read, T, state) {
-  if (entry.scan3 || T.expanded3) return null;
+  // (a build that kept the retail save data – expandedEntry `retail3` – keeps gPokemonStoragePtr right after the save
+  // block pointers, as found by the place reader)
+  const kept = entry.scan3 && entry.retail3;
+  if ((entry.scan3 || T.expanded3) && !kept) return null;
+  if (kept && !state.sb1PtrAddr) return null;
   const id = String(entry.id || '');
-  const L = GBA_STORAGE[/^(ruby|sapphire)_(us|de)$/.test(id) ? 'rs' : /^emerald_/.test(id) ? 'e' : /^(firered|leafgreen)_/.test(id) ? 'frlg' : ''];
+  const L = kept ? { ptr: state.sb1PtrAddr + 8 } : GBA_STORAGE[/^(ruby|sapphire)_(us|de)$/.test(id) ? 'rs' : /^emerald_/.test(id) ? 'e' : /^(firered|leafgreen)_/.test(id) ? 'frlg' : ''];
   if (!L) return null;
   const now = Date.now();
   if (state.box3 && now - state.box3At < 2500) return state.box3;
   let at = L.at;
   if (!at) {
-    const p = read(entry.saveBlockPtrs?.sb2 ? hex(entry.saveBlockPtrs.sb2) + 4 : L.ptr, 4);
+    const p = read(entry.saveBlockPtrs?.sb2 && !kept ? hex(entry.saveBlockPtrs.sb2) + 4 : L.ptr, 4);
     at = p ? u32le(p, 0) : 0;
   }
-  const len = 4 + BOX3_SLOTS * 80;
+  if (!(at >= 0x02000000 && at < 0x02040000)) return null;
+  const n = kept ? state.box3N || boxCount3(read, at) : 14;
+  if (!n) return null;
+  if (kept) state.box3N = n;
+  const slots = n * 30;
+  const len = 4 + slots * 80;
   if (!(at >= 0x02000000 && at + len <= 0x02040000)) return null;
   const raw = read(at, len);
-  if (!raw || raw[0] >= 14) return null; // currentBox
+  if (!raw || raw[0] >= n) return null; // currentBox
   const boxes = [];
   const buf = new Uint8Array(100); // parsePk3 reads a party struct: the box part, zeros for level / HP / stats
   let bad = 0;
-  for (let i = 0; i < BOX3_SLOTS; i++) {
+  for (let i = 0; i < slots; i++) {
     const o = 4 + i * 80;
     const slot = raw.subarray(o, o + 80);
     if (slot.every((x) => x === 0)) continue;
     buf.fill(0);
     buf.set(slot);
     const m = parsePk3(buf, T);
+    // (a hack's PC: every slot must read, or the boxes aren't what they seem – a Pokémon missing from them would be
+    // reported as released)
+    if (!m && kept) return null;
     if (!m) continue;
     if (m.bad) {
       bad++;
@@ -519,7 +565,7 @@ function readBoxesGen3(entry, read, T, state) {
     }
     boxes.push({ ...m, status: 0, box: Math.floor(i / 30), slot: i % 30, level: null, hp: null, maxHp: null });
   }
-  if (bad > 20 && boxes.length < bad) return null;
+  if ((bad > 20 && boxes.length < bad) || (kept && bad)) return null;
   state.box3 = boxes;
   state.box3At = now;
   return boxes;
@@ -552,9 +598,13 @@ function gen3Badges(entry, read, T, state, party) {
   };
   let sb1 = L.sb1;
   let sb2 = L.sb2;
+  // an engine whose team is searched for: SaveBlock1's flags where its code says (romloc.mjs gen3FlagsAt – Modern
+  // Emerald 0x1364), its save block pointers where the place reader found them (or the code names them)
+  const found = entry.scan3 ? state.sb1PtrAddr || entry.flags3?.sb1Ptr || null : null;
+  const flagsAt = entry.scan3 && entry.flags3?.flags ? entry.flags3.flags : L.flags;
   if (!sb1) {
-    const at = entry.saveBlockPtrs?.sb1 ? hex(entry.saveBlockPtrs.sb1) : entry.scan3 && state.sb1PtrAddr ? state.sb1PtrAddr : L.sb1Ptr;
-    const at2 = entry.saveBlockPtrs?.sb2 ? hex(entry.saveBlockPtrs.sb2) : entry.scan3 && state.sb1PtrAddr ? state.sb1PtrAddr + 4 : L.sb2Ptr;
+    const at = entry.saveBlockPtrs?.sb1 ? hex(entry.saveBlockPtrs.sb1) : found || L.sb1Ptr;
+    const at2 = entry.saveBlockPtrs?.sb2 ? hex(entry.saveBlockPtrs.sb2) : found ? found + 4 : L.sb2Ptr;
     sb1 = ptr(at);
     sb2 = ptr(at2);
   }
@@ -565,7 +615,7 @@ function gen3Badges(entry, read, T, state, party) {
   const ot = tid ? u32le(tid, 0).toString(16) : null;
   if (!ot || !party.some((m) => m.key?.split('-')[2] === ot)) return undefined;
   const flag = (f) => {
-    const b = read(sb1 + L.flags + (f >> 3), 1);
+    const b = read(sb1 + flagsAt + (f >> 3), 1);
     return b ? (b[0] >> (f & 7)) & 1 : null;
   };
   if (flag(badge + L.sys) !== 1) return undefined;
@@ -1013,6 +1063,28 @@ function battlerTypes3(T, state, x, own = false) {
   return state.types3Ok ? ks : null;
 }
 
+/**
+ * gEnemyParty wasn't where it was expected (an engine with another party array next to the player's – Modern Emerald's
+ * gPlayerPartyBackup – and no hint from the code): in a battle it is the array of valid structs one or two party sizes
+ * from the player's that holds none of the player's own Pokémon (a backup of the team holds the same PIDs). Kept in
+ * state.enemy3; at most once a second. → its mons (rawParty3) or [].
+ */
+function findEnemy3(read, T, state, mine) {
+  if (state.lastEnemyScan3 && Date.now() - state.lastEnemyScan3 < 1000) return [];
+  state.lastEnemyScan3 = Date.now();
+  const own = new Set(mine.map((x) => x.pid));
+  for (const d of [600, 1200, -600, -1200]) {
+    const at = state.party3 + d;
+    if (at < 0x02000000 || at + 600 > 0x02040000 || at === state.enemy3) continue;
+    const foes = rawParty3(read, at, 6, T);
+    if (foes.length && !foes.some((x) => own.has(x.pid))) {
+      state.enemy3 = at;
+      return foes;
+    }
+  }
+  return [];
+}
+
 /** Finds gBattleMons in EWRAM (see BMON3X) while a battle is on; at most once a second while it isn't found. */
 function findBattleMons3x(read, T, state, mine, foes) {
   if (state.bmons3) return state.bmons3;
@@ -1051,7 +1123,9 @@ function battleGen3(entry, read, T, state = {}) {
     if (!state.party3) return null;
     const count = party3Count(read, T, state) ?? 0;
     const mine = count >= 1 && count <= 6 ? rawParty3(read, state.party3, count, T) : [];
-    const foes = rawParty3(read, state.enemy3 || state.party3 + 600, 6, T);
+    let foes = rawParty3(read, state.enemy3 || state.party3 + 600, 6, T);
+    // (none there, or the player's own Pokémon – a backup of the team: gEnemyParty is elsewhere)
+    if (mine.length && (!foes.length || foes.some((x) => mine.some((y) => y.pid === x.pid)))) foes = findEnemy3(read, T, state, mine);
     if (!foes.length) return { kind: 'wild', enemy: null, active: null };
     const bm = mine.length ? findBattleMons3x(read, T, state, mine, foes) : null;
     const L = state.bmLayout3 || BMON3X;
@@ -1285,6 +1359,7 @@ function battleDS(entry, read, T, state, party) {
   // or none: the save party) showed a fainted mon with its old HP again for a moment, or the opponent at full HP.
   const held = state.heldCopies || new Map();
   const nextHeld = new Map();
+  const copies = new Map(); // this battle's copies (address → how many Pokémon) – Gen 5's battle structs point into them
   for (const addr of state.candidates || []) {
     if (addr === state.partyAddr) continue;
     const fresh = readPartyCore(read, addr, size, entry.gen, T);
@@ -1295,6 +1370,7 @@ function battleDS(entry, read, T, state, party) {
     nextHeld.set(addr, { mons, misses: fresh ? 0 : h.misses + 1 });
     const ck = copyKey(addr, mons);
     if (stale.has(ck)) continue; // left over from an earlier battle, untouched since
+    copies.set(addr, mons.length);
     if (!seen.has(addr)) seen.set(addr, ck);
     const changed = seen.get(addr) !== ck;
     if (mons.every((m) => pids.has(m.pid))) {
@@ -1361,15 +1437,16 @@ function battleDS(entry, read, T, state, party) {
   // The active opponent: first one still standing (trainers send them in order). Gen 5: the copies keep the HP the
   // battle started with – who is still standing is in the battle's own structs (a trainer's first Pokémon stayed on
   // the panel at 0 HP while the next one fought).
-  const hps = entry.gen === 5 ? gen5LiveHps(read, state, [...enemy.mons, ...party]) : null;
-  const hpOf = (m) => hps?.get(g5key(m)) ?? m.hp;
+  const structs = entry.gen === 5 ? gen5Structs(read, state, [...enemy.mons, ...party], copies) : null;
+  const hps = structs && new Map([...structs].map(([pid, x]) => [pid, x.hp]));
+  const hpOf = (m) => hps?.get(m.pid) ?? m.hp;
   const foe = enemy.mons.find((m) => hpOf(m) > 0) || enemy.mons[0];
   // Active player mon. Where we know the battle mon struct, its PID says who is out – a switch shows at once.
   // Otherwise: the last one whose HP changed in this battle (it took the hit – that follows a switch), else the
   // first one standing (the lead unless it fainted).
   // (Gen 5 without a known address for it – Black 2: the battle's own team order says who is out; the HP heuristic
   // below never fires there, the copies keep the starting HP)
-  const g5 = hps && !entry.battleActive ? gen5Active(read, state, party, hpOf) : null;
+  const g5 = structs && !entry.battleActive ? gen5Active(read, state, party, hpOf, structs) : null;
   const real = g5 !== null ? party[g5].pid : battleMonPid(entry, read, state, party);
   if (live) {
     const prev = state.battleHp || new Map();
@@ -1389,9 +1466,10 @@ function battleDS(entry, read, T, state, party) {
   let active = cur ? { index, hp: cur.hp, maxHp: cur.maxHp, status: cur.status } : null;
   let foeHp = null;
   if (hps) {
-    foeHp = hps.get(g5key(foe)) ?? null;
-    const i = active ? active.index : party.findIndex((m) => hps.has(g5key(m)));
-    if (i >= 0 && hps.has(g5key(party[i]))) active = { index: i, hp: hps.get(g5key(party[i])), maxHp: party[i].maxHp, status: active?.status ?? party[i].status };
+    foeHp = hps.get(foe.pid) ?? null;
+    const i = active ? active.index : party.findIndex((m) => hps.has(m.pid));
+    // (a Pokémon that grew a level in this battle: its struct has the new max HP, the save party the old one until the end)
+    if (i >= 0 && hps.has(party[i].pid)) active = { index: i, hp: Math.min(hps.get(party[i].pid), party[i].maxHp), maxHp: party[i].maxHp, status: active?.status ?? party[i].status };
   }
   state.battle = {
     kind: enemy.mons.length > 1 || foe.key.split('-')[1] !== tid ? 'trainer' : 'wild',
@@ -1401,49 +1479,75 @@ function battleDS(entry, read, T, state, party) {
     party: live && live.map((m) => ({ pid: m.pid, hp: m.hp, maxHp: m.maxHp, status: m.status })),
   };
   // (Gen 5: the battle structs' HP wins over the party copy's starting HP – every team member has one)
-  if (hps && state.battle.party) {
-    const byKey = new Map(party.map((m) => [m.pid, g5key(m)]));
-    state.battle.party = state.battle.party.map((m) => (hps.has(byKey.get(m.pid)) ? { ...m, hp: hps.get(byKey.get(m.pid)) } : m));
-  }
+  if (hps && state.battle.party) state.battle.party = state.battle.party.map((m) => (hps.has(m.pid) ? { ...m, hp: hps.get(m.pid) } : m));
   return state.battle;
 }
 
 /**
  * Gen 5: the battle's own Pokémon structs. The heap's party copies keep the HP the battle started with, so the live HP
- * comes from these: { u16 species, u16 max HP, u16 HP, … u8 level at +12 } for each Pokémon that is out (found live in
- * Black: the rival's Snivy 19 → 14 → 4 HP at 0x0226D8D4 and a second copy 0x448 on; Tepig's 0x224 before it). Found by
- * species, max HP and level, remembered while they still match – rescanned at most every 2 s. → Map(key → HP).
+ * comes from these: { u16 species, u16 max HP, u16 HP, … u8 level at +12 } for every Pokémon of both sides (found live in
+ * Black: the rival's Snivy 19 → 14 → 4 HP at 0x0226D8D4 and a second copy 0x448 on; Tepig's 0x224 before it), each twice.
+ * 0x0C before the species sits the struct's pointer to its Pokémon in the battle's party copy (found live in Black 2: the
+ * player's Patrat → copy + 8, Tepig → copy + 8 + 220, the wild Patrat → its own copy + 8), and that one starts with
+ * the PID – so a struct is told by whose Pokémon it is, not by what it looks like.
+ * They used to be found by species, max HP and level. A wild Patrat with the same level and max HP as the player's then
+ * shared its struct – and when the player's Patrat, switched out, grew a level from the shared EXP, its own struct no
+ * longer matched the save party's old numbers and the search took the wild one, which had just fainted: the player's
+ * Patrat "died" (#12, checked in Black 2 in souldew's fast player). Now a struct counts only when its pointer leads into
+ * one of this battle's copies (`copies`: address → count – a freed struct of an earlier battle points into a copy that is
+ * gone) and to the Pokémon's PID. Level and max HP may change (a level-up). Remembered per PID while that still holds,
+ * rescanned at most every 2 s. → Map(pid → { hp, maxHp, addrs: [struct addresses, both copies] }).
  */
-const G5MON = { maxHp: 2, hp: 4, level: 12 };
-const g5key = (m) => `${m.species}:${m.maxHp}:${m.level}`;
-function gen5LiveHps(read, state, mons) {
-  const cache = state.g5mons || (state.g5mons = new Map());
-  const fits = (a, m) => {
-    const b = read(a, 14);
-    return !!b && u16le(b, 0) === m.species && u16le(b, G5MON.maxHp) === m.maxHp && u16le(b, G5MON.hp) <= m.maxHp && b[G5MON.level] === m.level;
-  };
+const G5MON = { maxHp: 2, hp: 4, level: 12, pp: -0x0c };
+const G5_PK = 220;
+function gen5Struct(read, a, m, copies) {
+  const b = read(a + G5MON.pp, 0x0c + 14);
+  if (!b) return null;
+  const o = -G5MON.pp;
+  const maxHp = u16le(b, o + G5MON.maxHp);
+  const hp = u16le(b, o + G5MON.hp);
+  const level = b[o + G5MON.level];
+  if (u16le(b, o) !== m.species || !maxHp || maxHp > 999 || hp > maxHp || level < 1 || level > 100) return null;
+  const pp = u32le(b, 0);
+  let inCopy = false;
+  for (const [c, n] of copies) {
+    const off = pp - c - 8;
+    if (off >= 0 && off % G5_PK === 0 && off / G5_PK < n) inCopy = true;
+  }
+  if (!inCopy) return null;
+  const pid = read(pp, 4);
+  return pid && u32le(pid, 0) === m.pid ? { hp, maxHp } : null;
+}
+function gen5Structs(read, state, mons, copies) {
+  const cache = state.g5mons || (state.g5mons = new Map()); // pid → [struct addresses]
   const want = mons.filter(Boolean);
-  const missing = want.filter((m) => !(cache.get(g5key(m)) && fits(cache.get(g5key(m)), m)));
+  const out = new Map();
+  const check = (m) => {
+    const ok = (cache.get(m.pid) || []).map((a) => [a, gen5Struct(read, a, m, copies)]).filter(([, x]) => x);
+    if (ok.length) out.set(m.pid, { ...ok[0][1], addrs: ok.map(([a]) => a) });
+    return ok.length > 0;
+  };
+  const missing = want.filter((m) => !check(m));
   const now = Date.now();
-  if (missing.length && (!state.g5scan || now - state.g5scan > 2000)) {
+  if (missing.length && copies.size && (!state.g5scan || now - state.g5scan > 2000)) {
     state.g5scan = now;
-    for (const m of missing) cache.delete(g5key(m));
-    const bySpecies = new Map(missing.map((m) => [m.species, m]));
-    const ram = read(0x02200000, 0x200000); // the battle's heap (the Snivy above: 0x0226D8D4)
+    const bySpecies = new Map();
+    for (const m of missing) bySpecies.set(m.species, [...(bySpecies.get(m.species) || []), m]);
+    const found = new Map(missing.map((m) => [m.pid, []]));
+    const BASE = 0x02200000;
+    const ram = read(BASE, 0x200000); // the battle's heap (the Snivy above: 0x0226D8D4)
     if (ram) {
-      for (let o = 0; o + 14 <= ram.length; o += 2) {
-        const m = bySpecies.get(ram[o] | (ram[o + 1] << 8));
-        if (!m || u16le(ram, o + G5MON.maxHp) !== m.maxHp || ram[o + G5MON.level] !== m.level || u16le(ram, o + G5MON.hp) > m.maxHp) continue;
-        if (!cache.get(g5key(m))) cache.set(g5key(m), 0x02200000 + o);
+      for (let o = 0x0c; o + 14 <= ram.length; o += 2) {
+        const ms = bySpecies.get(ram[o] | (ram[o + 1] << 8));
+        if (!ms || u16le(ram, o + G5MON.hp) > u16le(ram, o + G5MON.maxHp) || u16le(ram, o + G5MON.maxHp) > 999) continue;
+        for (const m of ms) if (gen5Struct(read, BASE + o, m, copies)) found.get(m.pid).push(BASE + o);
       }
     }
+    for (const m of missing) {
+      cache.set(m.pid, found.get(m.pid).slice(0, 4));
+      check(m);
+    }
     while (cache.size > 32) cache.delete(cache.keys().next().value);
-  }
-  const out = new Map();
-  for (const m of want) {
-    const a = cache.get(g5key(m));
-    const b = a && fits(a, m) ? read(a + G5MON.hp, 2) : null;
-    if (b) out.set(g5key(m), u16le(b, 0));
   }
   return out;
 }
@@ -1453,54 +1557,47 @@ function gen5LiveHps(read, state, mons) {
  * structs (pointer = struct − 0x0C): once in the team's own order and once in battle order, the Pokémon that is out
  * first (found live in Black 2, a wild battle with Tepig and Purrloin: 0x0225736C [Tepig, Purrloin] turned
  * [Purrloin, Tepig] with the switch, 0x022573EC stayed; the same pair again for the structs' second copy). The arrays
- * are found from the structs once per battle (rescanned at most every 2 s while they don't check out) and read every
- * poll. → the party index of the Pokémon that is out, or null when that can't be told.
+ * are found from the structs (gen5Structs: the player's, told by PID) once per battle (rescanned at most every 2 s while
+ * they don't check out) and read every poll. → the party index of the Pokémon that is out, or null when that can't be told.
  */
-const G5PTR = 0x0c;
-function gen5Active(read, state, party, hpOf) {
+const G5PTR = -G5MON.pp;
+function gen5Active(read, state, party, hpOf, structs) {
   const n = party.length;
   if (n < 2) return n === 1 ? 0 : null;
-  const keys = party.map(g5key);
-  if (new Set(keys).size !== n) return null; // two alike: their structs can't be told apart
-  const fits = (ptr, i) => {
-    const b = read(ptr + G5PTR, 14);
-    return !!b && u16le(b, 0) === party[i].species && u16le(b, G5MON.maxHp) === party[i].maxHp && b[G5MON.level] === party[i].level;
-  };
-  const orderAt = (o, addr) => {
+  const ptrs = new Map(); // struct − 0x0C → party index, every struct of the player's this poll
+  party.forEach((m, i) => {
+    for (const a of structs.get(m.pid)?.addrs || []) ptrs.set(a - G5PTR, i);
+  });
+  const pids = party.map((m) => m.pid).join();
+  const orderAt = (addr) => {
     const b = read(addr, n * 4);
     if (!b) return null;
     const order = [];
     for (let k = 0; k < n; k++) {
-      const i = o.ptrs.get(u32le(b, k * 4));
+      const i = ptrs.get(u32le(b, k * 4));
       if (i === undefined || order.includes(i)) return null;
       order.push(i);
     }
-    return order.every((i, k) => fits(u32le(b, k * 4), i)) ? order : null;
+    return order;
   };
   let o = state.g5order;
-  let orders = o && o.keys === keys.join() ? o.arrays.map((a) => orderAt(o, a)) : [];
+  let orders = o && o.pids === pids ? o.arrays.map(orderAt) : [];
   if (!orders.length || orders.some((x) => !x)) {
     const now = Date.now();
     if (o?.at && now - o.at < 2000) return o.last ?? null;
-    o = state.g5order = { keys: keys.join(), at: now, ptrs: new Map(), arrays: [], last: o?.last ?? null };
+    o = state.g5order = { pids, at: now, arrays: [], last: o?.pids === pids ? o.last ?? null : null };
+    if (ptrs.size < n) return o.last;
     const BASE = 0x02200000;
     const ram = read(BASE, 0x200000);
-    if (!ram) return null;
-    const want = new Map(party.map((m, i) => [m.species, i]));
-    for (let x = 0; x + 14 <= ram.length; x += 2) {
-      const i = want.get(u16le(ram, x));
-      if (i === undefined) continue;
-      const m = party[i];
-      if (u16le(ram, x + G5MON.maxHp) === m.maxHp && ram[x + G5MON.level] === m.level && u16le(ram, x + G5MON.hp) <= m.maxHp) o.ptrs.set(BASE + x - G5PTR, i);
-    }
+    if (!ram) return o.last;
     for (let x = 0; x + n * 4 <= ram.length && o.arrays.length < 8; x += 4) {
-      if (!o.ptrs.has(u32le(ram, x))) continue;
+      if (!ptrs.has(u32le(ram, x))) continue;
       const seen = new Set();
-      for (let k = 0; k < n; k++) seen.add(o.ptrs.get(u32le(ram, x + k * 4)));
+      for (let k = 0; k < n; k++) seen.add(ptrs.get(u32le(ram, x + k * 4)));
       if (seen.size === n && !seen.has(undefined)) o.arrays.push(BASE + x);
     }
-    orders = o.arrays.map((a) => orderAt(o, a)).filter(Boolean);
-    if (!orders.length) return null;
+    orders = o.arrays.map(orderAt).filter(Boolean);
+    if (!orders.length) return o.last;
   }
   // the team's own order is the identity; an array that differs is the battle order. All the same: nobody switched –
   // the lead is out (unless it can't fight: then the game sent the first one that can)
@@ -1598,12 +1695,49 @@ export function withBattleHp(party, battle) {
     const byPid = new Map(battle.party.map((m) => [m.pid, m]));
     return party.map((m) => {
       const b = byPid.get(m.pid);
-      return b ? { ...m, hp: b.hp, ...(b.status !== undefined ? { status: b.status } : {}) } : m;
+      // (a Pokémon that grew a level in this battle: the battle has its new max HP, the save party the old one until the end)
+      return b ? { ...m, hp: m.maxHp > 0 ? Math.min(b.hp, m.maxHp) : b.hp, ...(b.status !== undefined ? { status: b.status } : {}) } : m;
     });
   }
   const a = battle.active;
   if (!a || a.hp === undefined || !party[a.index] || party[a.index].maxHp !== a.maxHp) return party;
   return party.map((m, i) => (i === a.index ? { ...m, hp: a.hp, ...(a.status !== undefined ? { status: a.status } : {}) } : m));
+}
+
+/**
+ * A Pokémon that drops to 0 HP counts as down once the next read says 0 too. Every reader checks what it can (checksums,
+ * torn structs, the battle's own structs), but a death is final – it takes the partner's Pokémon with it – and one read of
+ * a struct the game is rewriting, or of the wrong struct, must never be enough for it (#12: a Pokémon that grew a level
+ * on the bench showed 0 HP for a moment). On the first read the Pokémon keeps the HP it had before; a real faint stays
+ * at 0 and shows one poll later. A Pokémon already at 0 HP when tracking starts isn't held (there is no HP to hold).
+ * `state` is the reader state of the session (the same object every poll). → the party, held HP where needed.
+ */
+export function confirmFaints(party, state) {
+  if (!Array.isArray(party)) return party;
+  const before = state.faintHp || new Map(); // key → the HP reported last time
+  const zero = state.faintZero || new Set(); // keys read at 0 last time
+  const nextHp = new Map();
+  const nextZero = new Set();
+  const out = party.map((m) => {
+    const id = m?.key;
+    if (!id) return m;
+    const down = m.maxHp > 0 && m.hp === 0;
+    if (!down) {
+      nextHp.set(id, m.hp);
+      return m;
+    }
+    nextZero.add(id);
+    const was = before.get(id);
+    if (zero.has(id) || !(was > 0)) {
+      nextHp.set(id, 0);
+      return m;
+    }
+    nextHp.set(id, was); // first read at 0: wait for the next one
+    return { ...m, hp: Math.min(was, m.maxHp) };
+  });
+  state.faintHp = nextHp;
+  state.faintZero = nextZero;
+  return out;
 }
 
 /** Bus reader over streamed regions [{ addr, hex }] (mGBA bridge). */
