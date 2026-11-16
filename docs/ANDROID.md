@@ -68,7 +68,7 @@ when their tools are missing.
 3. ~~Android project in `android/`~~ – done: `MainActivity` (immersive landscape WebView, file picker, back button,
    HTML fullscreen), `NodeService` (foreground service, unpacks the assets, starts Node), JNI `native-lib.cpp`.
 4. ~~Packaging script~~ – done: `node scripts/android-assets.mjs` fills `android/app/src/main/assets/souldew` (48 MB).
-5. **Next: nodejs-mobile.** Download `nodejs-mobile-v18.20.4-android.zip` and unpack it so that
+5. ~~nodejs-mobile~~ – done on this PC (SHA-256 of the zip: BD7321EA…C2AF, 55 MB; not in git, re-download from the release page if missing). Download `nodejs-mobile-v18.20.4-android.zip` and unpack it so that
    `android/app/libnode/bin/<abi>/libnode.so` (arm64-v8a, x86_64) and `android/app/libnode/include/node/*.h` exist.
    The build then compiles the JNI bridge and bundles `libnode.so`; without it the app builds (37 MB debug APK) but
    shows "the Node runtime is not bundled".
