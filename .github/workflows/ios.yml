@@ -36,9 +36,9 @@ env:
 jobs:
   ipa:
     name: Build the IPA
-    # a push only builds when IOS_CI is "true"; a manual run does, and so does a version tag (release.yml calls this workflow
-    # only when IOS_RELEASE is "true")
-    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/') || vars.IOS_CI == 'true'
+    # a push only builds when IOS_CI is "true"; a manual run does, and so does a desktop version tag v* (release.yml calls this
+    # workflow only when IOS_RELEASE is "true") – not the Android tags (android-v*)
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/v') || vars.IOS_CI == 'true'
     runs-on: macos-latest
     timeout-minutes: 60
     outputs:
