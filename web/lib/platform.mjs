@@ -49,6 +49,7 @@ export function shortPath(p) {
   return String(p)
     .replace(/^\/Users\/[^/]+\/Library\/Mobile Documents\/com~apple~CloudDocs/, 'iCloud Drive')
     .replace(/^\/Users\/[^/]+\/Library\/Application Support\/OpenEmu\/Game Library/, 'OpenEmu').replace(/^\/Users\/[^/]+/, '~')
+    .replace(/^\/storage\/emulated\/0(?=\/|$)/, 'Internal storage')
     .replace(/^\/(?:var\/)?home\/[^/]+(?=\/|$)/, '~')
     .replace(/^[A-Za-z]:\\Users\\[^\\]+\\(OneDrive[^\\]*)/i, '$1').replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~');
 }

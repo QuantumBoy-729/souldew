@@ -49,3 +49,13 @@ test('Android: "auto" never steps down to the software renderer (the core crashe
   assert.equal(pickRenderer({ setting: 'auto', memo: { k: 'software' }, lastGpu: 'k', platform: 'android' }).mode, 'vulkan');
   assert.equal(pickRenderer({ setting: 'auto', memo: { k: 'software' }, lastGpu: 'k', platform: 'linux' }).mode, 'software');
 });
+
+test('Android: the device search looks in the shared storage (Download, ROMs …), not in the private home', async () => {
+  const { discoverCandidates } = await import('../server/lib/library.mjs');
+  const c = discoverCandidates('/data/user/0/app.souldew/files', { platform: 'android', env: {} });
+  assert.ok(c.includes('/storage/emulated/0/Download'));
+  assert.ok(c.includes('/storage/emulated/0/ROMs'));
+  assert.ok(!c.some((p) => p.includes('app.souldew')), 'the private home is not searched');
+  const d = discoverCandidates('/x', { platform: 'android', env: { SLS_SHARED_DIR: '/sdcard' } });
+  assert.ok(d.includes('/sdcard/Download'));
+});

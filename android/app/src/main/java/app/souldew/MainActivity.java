@@ -3,7 +3,13 @@ package app.souldew;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
+import android.os.Environment;
+import android.provider.Settings;
+import android.webkit.JavascriptInterface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -102,10 +108,35 @@ public class MainActivity extends Activity {
 
             @Override public void onPermissionRequest(PermissionRequest r) { r.deny(); }
         });
+        // for the page (loaded from the local server only – other addresses open in the browser): the files permission the
+        // device search needs
+        web.addJavascriptInterface(new FilesAccess(), "SouldewApp");
         root.addView(web, new FrameLayout.LayoutParams(-1, -1));
 
         startForegroundService(new Intent(this, NodeService.class));
         waitForServer();
+    }
+
+    /** "All files access" (Android 11+) / the storage permission (older): what the device search needs to see game files. */
+    private final class FilesAccess {
+        @JavascriptInterface public boolean hasFilesAccess() {
+            if (Build.VERSION.SDK_INT >= 30) return Environment.isExternalStorageManager();
+            return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+        }
+
+        @JavascriptInterface public void requestFilesAccess() {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT < 30) {
+                    requestPermissions(new String[] {Manifest.permission.READ_EXTERNAL_STORAGE}, 2);
+                    return;
+                }
+                try {
+                    startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + getPackageName())));
+                } catch (Exception e) {
+                    startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)); // the list of all apps
+                }
+            });
+        }
     }
 
     private void waitForServer() {
