@@ -52,7 +52,7 @@ env:
 jobs:
   apk:
     name: Build the APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # not ubuntu-latest: that label is moving to Ubuntu 26 (other JDK and SDK images)
     timeout-minutes: 120
     outputs:
       version: ${{ steps.version.outputs.version }}
