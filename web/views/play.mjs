@@ -1197,7 +1197,7 @@ export function GameSession({ session, mode }) {
   const [wasmSrc] = useState(() => {
     // 3DS: souldew's own player page – the game runs in the native host (server/lib/ctr.mjs), its saves live in the
     // host's folder for this game / run slot (target.key)
-    if (target.system === '3ds') return `/player3ds.html?rom=${encodeURIComponent(target.rom)}&key=${encodeURIComponent(target.key)}&name=${encodeURIComponent(target.name)}&layout=${layout3ds}`;
+    if (target.system === '3ds') return `/player3ds.html?rom=${encodeURIComponent(target.rom)}&key=${encodeURIComponent(target.key)}&name=${encodeURIComponent(target.name)}&layout=${layout3ds}${IS_TOUCH ? '&touch=1' : '&touch=0'}`;
     // EmulatorJS names the ROM (and its browser-side save) after the URL's last segment → make it unique per game.
     const romKey = `${hash(new TextEncoder().encode(target.key)).replace(/\D/g, '')}`;
     const romUrl = `/rom/g${romKey}.${target.system}?src=${encodeURIComponent(target.rom)}`;

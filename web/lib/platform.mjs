@@ -54,6 +54,14 @@ export function shortPath(p) {
 }
 
 /**
+ * Sounds checkbox text: "this computer" on a computer, "this device" on a phone or tablet (IS_TOUCH, defined below – read
+ * when called, not at load).
+ */
+export const soundsText = () => (IS_TOUCH
+  ? t('set.soundsDevice', 'Sounds on this device (start-up chime, catches, deaths, badges, pings)')
+  : t('set.soundsAll', 'Sounds on this computer (start-up chime, catches, deaths, badges, pings)'));
+
+/**
  * A touch screen is the main way to point (a phone or tablet – not a laptop with a touch screen next to a mouse): the
  * game fills the screen and its controls sit in an overlay (views/play.mjs, styles.css .touch-play). `?touch=1` / `?touch=0`
  * in the address forces it, for a browser that reports its screen wrongly (desktop mode on a tablet).

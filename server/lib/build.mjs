@@ -356,7 +356,7 @@ async function placeLargeRom(src, dest, onLog) {
   } catch {
     // another drive, or a file system without hard links
   }
-  onLog('Kopiere das 3DS-Spiel in den Run-Ordner …');
+  onLog('Copying the 3DS game into the run folder …');
   await copyFile(src, dest, fsConstants.COPYFILE_FICLONE);
 }
 
@@ -457,7 +457,7 @@ async function buildInto(opts, onLog, onProgress, bridge) {
     const step = (p) => onProgress({ slot, index, count: buildFor.length, ...p });
     if (ctrRando) {
       const seed = String(manifest.randomizer.seeds[slot] || '');
-      if (!/^-?\d{1,19}$/.test(seed)) throw new Error(`Ungültiger Seed für ${player.name}`);
+      if (!/^-?\d{1,19}$/.test(seed)) throw new Error(`Invalid seed for ${player.name}`);
       // UPR writes into an existing file without truncating it – and the old file may be a hard link to the
       // library's game (a run built without the randomizer): always a new file. A previous build's game under
       // another name (other player name, the plain .3ds) would only take up gigabytes.
@@ -467,13 +467,13 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       const prev = ctrBuilt.get(seed);
       if (prev) {
         step({ phase: 'reuse' });
-        onLog(`Gleicher Seed wie ${prev.player} – übernehme dessen Spiel für ${player.name}`);
+        onLog(`Same seed as ${prev.player} – reusing that game for ${player.name}`);
         await reuseCtrBuild(prev, romOut, logOut, dataOut);
         ctrSha1 = prev.sha1;
       } else {
         const propsFile = join(dir, `${slot}.settings.properties`);
         writeFileSync(propsFile, toProperties(manifest.randomizer.values));
-        onLog(`Randomisiere das 3DS-Spiel für ${player.name} (Seed ${seed}) – das dauert ein paar Minuten …`);
+        onLog(`Randomizing the 3DS game for ${player.name} (seed ${seed}) – this takes a few minutes …`);
         step({ phase: 'randomize' });
         const t = Date.now();
         let res;
@@ -485,23 +485,23 @@ async function buildInto(opts, onLog, onProgress, bridge) {
         }
         for (const w of res.warnings) if (!manifest.warnings.includes(w)) manifest.warnings.push(w);
         manifest.randomizer.settingsString = res.settingsString;
-        onLog(`Fertig in ${((Date.now() - t) / 1000).toFixed(1)} s – berechne die Prüfsumme …`);
+        onLog(`Done in ${((Date.now() - t) / 1000).toFixed(1)} s – calculating the checksum …`);
         step({ phase: 'hash' });
         ctrSha1 = await hashFile(romOut);
         ctrBuilt.set(seed, { rom: romOut, log: logOut, data: dataOut, sha1: ctrSha1, player: player.name });
       }
     } else if (manifest.randomizer.enabled) {
       const seed = String(manifest.randomizer.seeds[slot] || '');
-      if (!/^-?\d{1,19}$/.test(seed)) throw new Error(`Ungültiger Seed für ${player.name}`);
+      if (!/^-?\d{1,19}$/.test(seed)) throw new Error(`Invalid seed for ${player.name}`);
       const propsFile = join(dir, `${slot}.settings.properties`);
       writeFileSync(propsFile, toProperties(manifest.randomizer.values));
-      onLog(`Randomisiere ROM für ${player.name} (Seed ${seed}) …`);
+      onLog(`Randomizing the ROM for ${player.name} (seed ${seed}) …`);
       step({ phase: 'randomize' });
       const t = Date.now();
       const res = await bridge(['randomize', patched.path, romOut, propsFile, seed, logOut, dataOut]);
       for (const w of res.warnings) if (!manifest.warnings.includes(w)) manifest.warnings.push(w);
       manifest.randomizer.settingsString = res.settingsString;
-      onLog(`Fertig in ${((Date.now() - t) / 1000).toFixed(1)} s`);
+      onLog(`Done in ${((Date.now() - t) / 1000).toFixed(1)} s`);
     } else if (ctr) {
       await placeLargeRom(patched.path, romOut, onLog);
       rmSync(dataOut, { force: true });
@@ -528,10 +528,10 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       // or the other title of its pair (SoulSilver in a HeartGold run).
       const mustMatch = needsIdenticalRom(manifest);
       onLog(manifest.outputs[slot].matchesFriend
-        ? `✔ ROM für ${player.name} ist byte-identisch mit dem deines Freundes`
-        : mustMatch ? `⚠ ROM für ${player.name} weicht vom Run-Paket ab (anderes Basis-ROM/Version?)`
-          : pairedWithHost ? `ℹ ${player.name} spielt die andere Edition des Spielepaars als der Host – passt, jeder spielt seine eigene Kopie`
-            : `ℹ ROM für ${player.name} ist eine andere Fassung des Spiels als beim Host – passt, jeder spielt seine eigene Kopie`);
+        ? `✔ ROM for ${player.name} is byte-identical to your friend’s`
+        : mustMatch ? `⚠ ROM for ${player.name} differs from the run pack (another base ROM / version?)`
+          : pairedWithHost ? `ℹ ${player.name} plays the other edition of the game pair than the host – that’s fine, everyone plays their own copy`
+            : `ℹ ROM for ${player.name} is another release of the game than the host’s – that’s fine, everyone plays their own copy`);
     }
   }
 

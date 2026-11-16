@@ -9,7 +9,7 @@ import { BUTTONS, RESERVED, PRESETS, bindable, keyLabel, resolve as resolveContr
   PAD_LABELS, PAD_PRESETS, PAD_HOTKEYS, padMap, padFamily, padLabel, pickPad, padKey, looksLikePad } from '../lib/controls.mjs';
 import { SHORTCUTS, buttonLabel } from './guide.mjs';
 import { UpdateSection } from './update.mjs';
-import { PLATFORM } from '../lib/platform.mjs';
+import { PLATFORM, IS_TOUCH, soundsText } from '../lib/platform.mjs';
 import { gpuBackends } from '/shared/gpu.mjs';
 import { LiveRunsSettings } from './liveshare.mjs';
 import { suspendPadNav } from '../lib/padnav.mjs';
@@ -364,7 +364,7 @@ export function SettingsView() {
         <span class="hint">${cfg.fullTurbo !== false ? t('set.speedGuardFull', 'Not with full-power turbo.') : t('set.speedGuardHint', 'Off: the speed you pick stays as it is, the bar shows when a scene runs slower. On: a level that isn’t reached for a few seconds drops to the highest one that holds.')}</span></span></label>
       <label class="check"><input type="checkbox" checked=${cfg.turboMax === true} onChange=${(e) => save({ turboMax: e.target.checked })} /><span>${t('set.turboMax', 'Turbo step “Max”: as fast as this computer can')}
         <span class="hint">${t('set.turboMaxHint', 'After 4× comes “Max” – no speed limit at all. How fast it gets depends on the game and the computer.')}</span></span></label>
-      <label class="check"><input type="checkbox" checked=${cfg.sounds !== false} onChange=${(e) => save({ sounds: e.target.checked })} /><span>${t('set.soundsAll', 'Sounds on this computer (start-up chime, catches, deaths, badges, pings)')}</span></label>
+      <label class="check"><input type="checkbox" checked=${cfg.sounds !== false} onChange=${(e) => save({ sounds: e.target.checked })} /><span>${soundsText()}</span></label>
       <label class="check"><input type="checkbox" checked=${cfg.shareScreen !== false} onChange=${(e) => save({ shareScreen: e.target.checked })} /><span>${t('set.shareScreenAll', 'Share my screen with the other players')}
         <span class="hint">${t('set.shareScreenHint', 'While you play, the others see your game small in a corner. It is only sent while someone is watching.')}</span></span></label>
       <${GraphicsSetting} cfg=${cfg} save=${save} />
@@ -377,11 +377,14 @@ export function SettingsView() {
       <${ThemePicker} value=${cfg.theme} onPick=${(id) => save({ theme: id })} />
     </section>
 
-    <${ControlsSection} saved=${cfg.controls || null} save=${(p) => save(p).catch((e) => toast({ kind: 'death', title: t('set.controls', 'Controls'), text: e.message }))} />
+    ${!IS_TOUCH && html`<${ControlsSection} saved=${cfg.controls || null} save=${(p) => save(p).catch((e) => toast({ kind: 'death', title: t('set.controls', 'Controls'), text: e.message }))} />`}
     <${PadSection} saved=${cfg.pads || null} save=${(p) => save(p).catch((e) => toast({ kind: 'death', title: t('pad.title', 'Controller'), text: e.message }))}
       nav=${cfg.padNav !== false} saveNav=${(on) => save({ padNav: on })} />
 
-    <section class="panel stack">
+    ${IS_TOUCH ? html`<section class="panel stack">
+      <h2>${t('set.emulators', 'Emulators')}</h2>
+      <p class="small muted">${t('set.emuDevice', 'Games run in the built-in emulator: Game Boy, Game Boy Color, Game Boy Advance and Nintendo DS, with live sync. Nintendo 3DS games and external emulators (Azahar, melonDS, mGBA) are not available on phones and tablets.')}</p>
+    </section>` : html`<section class="panel stack">
       <h2>${t('set.emulators', 'Emulators')}</h2>
       <p class="small muted">${t('set.emuText', 'The built-in emulator plays every system up to the Nintendo 3DS and has the best live sync. 3DS games can also run in Azahar (for example when a graphics card can’t run the built-in 3DS player). External emulators are optional otherwise.')}</p>
       ${status?.native?.ok && html`<label class="check"><input type="checkbox" checked=${cfg.nativeCore !== false} onChange=${(e) => save({ nativeCore: e.target.checked })} /><span>${t('set.native', 'Fast player for DS, GBA and Game Boy')}
@@ -403,7 +406,7 @@ export function SettingsView() {
       </div>`)}
       ${status?.emulators?.mgba?.installed && html`<div class="note">${t('set.mgbaScriptAgain', 'For live data with mGBA: Tools › Scripting… › File › Load script… and pick this file (again after every mGBA restart):')} <span class="code">${status.live?.script}</span>
         <button class="btn small ghost" onClick=${() => { copy(status.live?.script || ''); toast({ kind: 'ok', title: t('common.copied', 'Copied'), text: status.live?.script }); }}>${t('common.copy', 'Copy')}</button></div>`}
-    </section>
+    </section>`}
 
     <section class="panel stack">
       <h2>${t('set.library', 'Library')}</h2>

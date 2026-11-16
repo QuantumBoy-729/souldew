@@ -3,7 +3,7 @@ import { useApp, saveDiagnostics } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t } from '../lib/i18n.mjs';
 import { resolve as resolveControls, keyLabel } from '../lib/controls.mjs';
-import { shortcut } from '../lib/platform.mjs';
+import { shortcut, IS_TOUCH } from '../lib/platform.mjs';
 
 export const SHORTCUTS = () => [
   ['Tab', t('keys.turboHold', 'Hold for fast forward')],
@@ -66,11 +66,12 @@ export function ConnectionText({ group = false } = {}) {
 
 export function GuideView() {
   const { route } = useApp();
-  const [tab, setTab] = useState(route.params.tab || 'start');
+  const [tab, setTab] = useState(IS_TOUCH && route.params.tab === 'keys' ? 'start' : route.params.tab || 'start');
   return html`<div class="stack-l">
     <div class="topbar"><h1>${t('guide.title', 'Help')}</h1></div>
     <div class="tabs" role="tablist" data-pad-tabs>
       ${[['start', t('guide.start', 'Getting started')], ['keys', t('guide.keys', 'Controls & shortcuts')], ['faq', t('guide.faq', 'Questions')]]
+        .filter(([k]) => !(IS_TOUCH && k === 'keys')) // keys and shortcuts are for a keyboard
         .map(([k, l]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${l}</button>`)}
     </div>
     ${tab === 'start' && html`<section class="panel steps-list">

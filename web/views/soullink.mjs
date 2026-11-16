@@ -1,8 +1,7 @@
 import { html, useState, useEffect } from '/vendor/htm-preact.mjs';
 import { useApp, Modal, Led } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
-import { t, ago } from '../lib/i18n.mjs';
-import { api } from '../lib/api.mjs';
+import { t, ago } from '../lib/i18n.mjs';import { api } from '../lib/api.mjs';
 import { catalog, gameById, hackById, gameTitle, patchLabel, genFromSystem } from '../lib/data.mjs';
 import { PRESETS, DEFAULT_VALUES, localizeRandomizer, randomSeed, sameSettings, withDefaults, fieldActive, fieldEnabled, forGen, buildValues } from '/shared/randomizer-options.mjs';
 import { Cart, coverOf } from './library.mjs';

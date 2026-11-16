@@ -8,14 +8,15 @@ import { catalog, gameTitle } from '../lib/data.mjs';
 import { romFeatures, FEATURES } from '/shared/live/features.mjs';
 import { gymCapsFamily } from '/shared/routes.mjs';
 import { FirstSteps } from './firststeps.mjs';
-import { IS_MAC, IS_WIN, shortPath } from '../lib/platform.mjs';
+import { IS_MAC, IS_WIN, IS_TOUCH, shortPath } from '../lib/platform.mjs';
 import { addedToLibrary, addedMessage, unpackToast } from '../lib/libadded.mjs';
 import { patchTitle } from '/shared/patchname.mjs';
 
 const SYS = { gb: 'GB', gbc: 'GBC', gba: 'GBA', nds: 'DS', '3ds': '3DS' };
 
 /** "Search my Mac" / "Search my PC" – the button's label on this computer (PC: Windows and Linux). */
-export const discoverLabel = () => (IS_MAC ? t('disc.button', 'Search my Mac') : t('disc.buttonPc', 'Search my PC'));
+export const discoverLabel = () => (IS_TOUCH ? t('disc.buttonDevice', 'Search my device')
+  : IS_MAC ? t('disc.button', 'Search my Mac') : t('disc.buttonPc', 'Search my PC'));
 
 /** Ask for files (native dialog in the app, file input in a browser) and import them. */
 
@@ -61,13 +62,13 @@ export function DiscoverModal({ onClose }) {
       setBusy(false);
     }
   };
-  return html`<${Modal} open=${true} wide onClose=${() => !busy && onClose()} title=${IS_MAC ? t('disc.title', 'Search this Mac for games') : t('disc.titlePc', 'Search this PC for games')}
+  return html`<${Modal} open=${true} wide onClose=${() => !busy && onClose()} title=${IS_TOUCH ? t('disc.titleDevice', 'Search this device for games') : IS_MAC ? t('disc.title', 'Search this Mac for games') : t('disc.titlePc', 'Search this PC for games')}
     footer=${html`<button class="btn ghost" disabled=${busy} onClick=${onClose}>${t('common.cancel', 'Cancel')}</button>
       ${res && html`<button class="btn primary" disabled=${busy || !chosen.length} onClick=${add}><${Icon} name="plus" size=${14} />${t('disc.add', 'Add {n}|Add {n}', { n: chosen.length, count: chosen.length })}</button>`}`}>
     ${!res && !error && html`<div class="disc-search" role="status"><span class="disc-spin" aria-hidden="true"></span>
-      <div><b>${IS_MAC ? t('disc.searching', 'Looking in Downloads, Desktop, Documents, iCloud Drive and game folders …') : IS_WIN ? t('disc.searchingPc', 'Looking in Downloads, Desktop, Documents, OneDrive and game folders …')
+      <div><b>${IS_TOUCH ? t('disc.searchingDevice', 'Looking in Downloads, Documents and game folders …') : IS_MAC ? t('disc.searching', 'Looking in Downloads, Desktop, Documents, iCloud Drive and game folders …') : IS_WIN ? t('disc.searchingPc', 'Looking in Downloads, Desktop, Documents, OneDrive and game folders …')
         : t('disc.searchingLinux', 'Looking in Downloads, Desktop, Documents, game folders (EmuDeck, RetroDECK, RetroArch) and on SD cards …')}</b>
-      <p class="small muted">${IS_MAC ? t('disc.privacy', 'Only file names and the first bytes of game files are read – nothing leaves your Mac. macOS may ask once whether souldew may look into these folders.')
+      <p class="small muted">${IS_TOUCH ? t('disc.privacyDevice', 'Only file names and the first bytes of game files are read – nothing leaves your device.') : IS_MAC ? t('disc.privacy', 'Only file names and the first bytes of game files are read – nothing leaves your Mac. macOS may ask once whether souldew may look into these folders.')
         : t('disc.privacyPc', 'Only file names and the first bytes of game files are read – nothing leaves your PC.')}</p></div></div>`}
     ${error && html`<div class="warning error" role="alert">${error}</div>`}
     ${busy && unpacking?.title && html`<div class="disc-search" role="status"><span class="disc-spin" aria-hidden="true"></span>

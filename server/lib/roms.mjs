@@ -42,7 +42,7 @@ export function preparePatchedRom(romId, patchId, onLog = () => {}, config = {})
   const baseCrc = crc32Hex(rom);
   const ext = extFor(romId, rom);
   const header = identifyRom(rom.subarray(0, 0x200), ext);
-  onLog(`Basis-ROM geladen (${(rom.length / 1048576).toFixed(1)} MB, CRC32 ${baseCrc})`);
+  onLog(`Base ROM loaded (${(rom.length / 1048576).toFixed(1)} MB, CRC32 ${baseCrc})`);
   mkdirSync(CACHE_DIR, { recursive: true });
   if (!patchId) {
     const path = join(CACHE_DIR, `vanilla-${baseCrc}.${ext}`);
@@ -61,15 +61,15 @@ export function preparePatchedRom(romId, patchId, onLog = () => {}, config = {})
     const buf = readFileSync(path);
     const crc = crc32Hex(buf);
     if (!known || crc === known.resultCrc) {
-      onLog(`Gepatchtes ROM aus Cache (CRC32 ${crc})`);
+      onLog(`Patched ROM from cache (CRC32 ${crc})`);
       return { path, crc, sha1: sha1(buf), size: buf.length, baseCrc, header: identifyRom(new Uint8Array(buf.subarray(0, 0x200)), ext), fromCache: true, patchName: known?.name || fileNameOf(patchId), system: header?.system || ext, patchSha1: patchSha };
     }
   }
-  onLog(`Wende Patch an (${detectPatchFormat(patch)}, ${(patch.length / 1048576).toFixed(1)} MB) …`);
+  onLog(`Applying patch (${detectPatchFormat(patch)}, ${(patch.length / 1048576).toFixed(1)} MB) …`);
   const t = Date.now();
   const out = applyPatch(rom, patch);
   const crc = crc32Hex(out);
-  onLog(`Patch angewendet in ${((Date.now() - t) / 1000).toFixed(1)} s – Ergebnis CRC32 ${crc}`);
+  onLog(`Patch applied in ${((Date.now() - t) / 1000).toFixed(1)} s – result CRC32 ${crc}`);
   if (known && crc !== known.resultCrc) throw new Error(`Patch-Ergebnis unerwartet (CRC32 ${crc}, erwartet ${known.resultCrc}).`);
   writeFileAtomic(path, out);
   return { path, crc, sha1: sha1(out), size: out.length, baseCrc, header: identifyRom(out.subarray(0, 0x200), ext), fromCache: false, patchName: known?.name || fileNameOf(patchId), system: header?.system || ext, patchSha1: patchSha };
@@ -90,6 +90,6 @@ function prepareCtr(romId, patchId, onLog, config, ext) {
   const header = ctrInfo(abs, ext);
   if (!header) throw httpError(400, 'Kein 3DS-Spiel', 'notCtr');
   const size = statSync(abs).size;
-  onLog(`3DS-Spiel ${header.productCode || header.titleId || ''} (${(size / 1048576).toFixed(0)} MB)`);
+  onLog(`3DS game ${header.productCode || header.titleId || ''} (${(size / 1048576).toFixed(0)} MB)`);
   return { path: abs, crc: null, sha1: null, size, baseCrc: null, header, fromCache: false, patchName: null, system: '3ds', ext };
 }
