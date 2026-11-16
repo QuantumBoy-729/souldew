@@ -57,15 +57,28 @@ when their tools are missing.
 | Android SDK | `ANDROID_HOME` set, platform 36, build-tools 35 and 36, platform-tools (adb) |
 | Command-line tools | installed (`cmdline-tools/latest`; its `sdkmanager` is a deprecated wrapper that mangles `;` in package names – use `android --sdk=<sdk> sdk install ndk/27.2.12479018`) |
 | NDK + CMake | installed: NDK 27.2.12479018 (r27c), CMake 3.22.1 with Ninja – for the small JNI bridge that starts `libnode.so` |
-| Gradle | not on PATH; the Android project brings its own wrapper |
-| Java | Temurin 25 – check which Gradle / Android Gradle Plugin versions accept it (17 or 21 is the safe choice) |
+| Gradle | wrapper in `android/` (Gradle 8.14.3, Android Gradle Plugin 8.11.1) |
+| Java | JDK 21 (Temurin) installed for Gradle; point `JAVA_HOME` at it (Java 25 is also installed, not used) |
 | Device | none connected over adb yet |
 
 ## Steps
 
 1. ~~Server on Node 18~~ – done, see above (the 18 test files that didn't load could still be made to run there).
-2. ~~Install the missing SDK parts~~ – done. Still to pick: a JDK for Gradle (17 or 21; 25 is what is installed).
-3. Android project in `android/`: Gradle wrapper, `app` module, manifest, `MainActivity` (WebView, immersive mode,
-   file picker for ROMs, back button), `NodeService`, JNI start of nodejs-mobile.
-4. Packaging script: copy `server/ shared/ web/` and production `node_modules` into the app's assets.
-5. Debug APK over adb to the phone; then signing and a release build.
+2. ~~Install the missing SDK parts~~ – done (JDK 21 too).
+3. ~~Android project in `android/`~~ – done: `MainActivity` (immersive landscape WebView, file picker, back button,
+   HTML fullscreen), `NodeService` (foreground service, unpacks the assets, starts Node), JNI `native-lib.cpp`.
+4. ~~Packaging script~~ – done: `node scripts/android-assets.mjs` fills `android/app/src/main/assets/souldew` (48 MB).
+5. **Next: nodejs-mobile.** Download `nodejs-mobile-v18.20.4-android.zip` and unpack it so that
+   `android/app/libnode/bin/<abi>/libnode.so` (arm64-v8a, x86_64) and `android/app/libnode/include/node/*.h` exist.
+   The build then compiles the JNI bridge and bundles `libnode.so`; without it the app builds (37 MB debug APK) but
+   shows "the Node runtime is not bundled".
+6. Debug APK over adb to the phone (`cd android && gradlew assembleDebug`, then `adb install`); then signing and a release build.
+
+## Build
+
+```
+node scripts/android-assets.mjs
+cd android
+$env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-21.0.13.9-hotspot"
+.\gradlew.bat assembleDebug      # app/build/outputs/apk/debug/app-debug.apk
+```
