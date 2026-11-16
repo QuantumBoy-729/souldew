@@ -146,6 +146,11 @@ The Android app (the server on nodejs-mobile in a WebView, the randomizer as DEX
 `android/`. How it is built, what differs from the desktop app, and how `android.yml` / `release.yml` produce and publish the APK
 (including the signing secrets): [ANDROID.md](ANDROID.md).
 
+## iOS
+
+An experimental iOS app (the server on nodejs-mobile in a WKWebView, built with XcodeGen) lives in `ios/`; its unsigned IPA is built by
+`ios.yml` on a macOS runner, on demand. What works, what can't on iOS, and how to build and sign it: [IOS.md](IOS.md).
+
 ## Live runs ("Share to Discord")
 
 A player links souldew to their Discord account once (Settings › Discord › "Live runs", with the code from `/live connect`)

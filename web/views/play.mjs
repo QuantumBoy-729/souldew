@@ -1,7 +1,7 @@
 import { html, useState, useEffect, useRef, useCallback } from '/vendor/htm-preact.mjs';
 import { useApp, Led, saveDiagnostics, copy, openExternal } from '../lib/ui.mjs';
 import { bridgeState } from '../lib/livebridge.mjs';
-import { IS_MAC, IS_WIN, IS_TOUCH, PLATFORM } from '../lib/platform.mjs';
+import { IS_MAC, IS_WIN, IS_TOUCH, IS_IOS, PLATFORM } from '../lib/platform.mjs';
 import { diag } from '../lib/diag.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, ago } from '../lib/i18n.mjs';
@@ -133,8 +133,9 @@ function NoCtrOnDevice() {
   return html`<div class="panel empty-state">
     <${Icon} name="play" size=${64} />
     <h2>${t('ctr.noPlayerTitle', 'The 3DS player isn’t available here')}</h2>
-    <p class="muted prose">${t('ctr.noPlayerDevice', 'This device can’t run souldew’s built-in 3DS player. Azahar for Android plays 3DS games in its own app – without live tracking.')}</p>
-    <div class="row"><button class="btn primary big" onClick=${() => openExternal(AZAHAR_ANDROID_URL)}>${t('ctr.getAzaharAndroid', 'Get Azahar for Android')}</button>
+    <p class="muted prose">${IS_IOS ? t('ctr.noPlayerIos', 'Nintendo 3DS games can’t run on an iPhone or iPad: iOS doesn’t let apps generate code at run time, which a 3DS emulator needs.')
+      : t('ctr.noPlayerDevice', 'This device can’t run souldew’s built-in 3DS player. Azahar for Android plays 3DS games in its own app – without live tracking.')}</p>
+    <div class="row">${!IS_IOS && html`<button class="btn primary big" onClick=${() => openExternal(AZAHAR_ANDROID_URL)}>${t('ctr.getAzaharAndroid', 'Get Azahar for Android')}</button>`}
       <button class="btn big" onClick=${() => navigate('play')}>${t('play.pickOther', 'Play something else')}</button></div>
   </div>`;
 }

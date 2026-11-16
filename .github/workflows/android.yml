@@ -57,10 +57,10 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
           cache: npm
@@ -75,7 +75,7 @@ jobs:
           echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
       - name: The 3DS part (cached)
         id: ctr-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: android/app/ctr/arm64-v8a
           key: android-ctr-${{ env.AZAHAR_TAG }}-${{ env.NDK_VERSION }}-${{ hashFiles('native/azahar-patch/**', 'native/ctr-host/**', 'scripts/build-ctr-android.mjs') }}
@@ -121,7 +121,7 @@ jobs:
           done
           mkdir -p dist
           cp "$apk" "dist/souldew-${{ steps.version.outputs.version }}-android-arm64.apk"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: android
           path: dist/souldew-*-android-arm64.apk

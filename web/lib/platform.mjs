@@ -62,6 +62,15 @@ export const soundsText = () => (IS_TOUCH
   ? t('set.soundsDevice', 'Sounds on this device (start-up chime, catches, deaths, badges, pings)')
   : t('set.soundsAll', 'Sounds on this computer (start-up chime, catches, deaths, badges, pings)'));
 
+/** An iPhone or iPad: the app there has no randomizer (no Java), no 3DS player (no JIT) and no way to scan the device. */
+export const IS_IOS = (() => {
+  try {
+    return /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  } catch {
+    return false;
+  }
+})();
+
 /**
  * A touch screen is the main way to point (a phone or tablet – not a laptop with a touch screen next to a mouse): the
  * game fills the screen and its controls sit in an overlay (views/play.mjs, styles.css .touch-play). `?touch=1` / `?touch=0`

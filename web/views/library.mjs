@@ -8,7 +8,7 @@ import { catalog, gameTitle } from '../lib/data.mjs';
 import { romFeatures, FEATURES } from '/shared/live/features.mjs';
 import { gymCapsFamily } from '/shared/routes.mjs';
 import { FirstSteps } from './firststeps.mjs';
-import { IS_MAC, IS_WIN, IS_TOUCH, shortPath } from '../lib/platform.mjs';
+import { IS_MAC, IS_WIN, IS_TOUCH, IS_IOS, shortPath } from '../lib/platform.mjs';
 import { addedToLibrary, addedMessage, unpackToast } from '../lib/libadded.mjs';
 import { patchTitle } from '/shared/patchname.mjs';
 
@@ -513,7 +513,7 @@ export function LibraryView() {
 
   return html`<div>
     <div class="topbar"><h1>${t('lib.title', 'Library')}</h1>
-      <button class="btn go" onClick=${() => setDiscover(true)}><${Icon} name="search" size=${16} />${discoverLabel()}</button>
+      ${!IS_IOS && html`<button class="btn go" onClick=${() => setDiscover(true)}><${Icon} name="search" size=${16} />${discoverLabel()}</button>`}
       <button class="btn" onClick=${() => addGamesFlow({ reloadLibrary, toast })}><${Icon} name="plus" size=${16} />${t('lib.addFiles', 'Add files')}</button>
       ${window.sls && html`<button class="btn ghost" onClick=${() => api.post('/api/library/reveal', {})}><${Icon} name="folder" size=${16} />${t('lib.reveal', 'Show folder')}</button>`}
     </div>

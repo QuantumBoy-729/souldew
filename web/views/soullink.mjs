@@ -1,7 +1,8 @@
 import { html, useState, useEffect } from '/vendor/htm-preact.mjs';
 import { useApp, Modal, Led } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
-import { t, ago } from '../lib/i18n.mjs';import { api } from '../lib/api.mjs';
+import { t, ago } from '../lib/i18n.mjs';
+import { IS_IOS } from '../lib/platform.mjs';import { api } from '../lib/api.mjs';
 import { catalog, gameById, hackById, gameTitle, patchLabel, genFromSystem } from '../lib/data.mjs';
 import { PRESETS, DEFAULT_VALUES, localizeRandomizer, randomSeed, sameSettings, withDefaults, fieldActive, fieldEnabled, forGen, buildValues } from '/shared/randomizer-options.mjs';
 import { Cart, coverOf } from './library.mjs';
@@ -653,6 +654,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
       </div>
       <p class="small muted">${!inspect ? t('new.checking', 'Checking the game …')
         : inspect.failed ? t('new.checkFailed', 'This combination of game and ROM hack doesn’t work – see the message above.')
+        : inspect.info?.missingTool === 'java' && IS_IOS ? t('new.noRandomizerIos', 'The randomizer needs Java, which iPhones and iPads don’t have – your run uses the game as it is.')
         : inspect.info?.missingTool === 'java' ? (solo ? t('new.noJavaSolo', 'Java wasn’t found, so the randomizer can’t run. Install Java (e.g. Temurin 21 from adoptium.net) and restart the app – or play the Nuzlocke without the randomizer.')
           : t('new.noJava', 'Java wasn’t found, so the randomizer can’t run. Install Java (e.g. Temurin 21 from adoptium.net) and restart the app – or play a regular SoulLink.'))
         : inspect.info?.missingTool === 'upr' ? (solo ? t('new.noUprSolo', 'The randomizer (Universal Pokémon Randomizer ZX) is missing – you can still play the Nuzlocke without it.')
