@@ -140,6 +140,12 @@ stores states as core `azahar-n3ds` and refuses others). The host exits with `_e
 renderer", "Automatic" steps down by itself (server/lib/ctrrenderer.mjs). Windows and Linux
 are built by CI only (see above). Research notes: [research/azahar.md](../research/azahar.md).
 
+## Android
+
+The Android app (the server on nodejs-mobile in a WebView, the randomizer as DEX, the 3DS player built for arm64) lives in
+`android/`. How it is built, what differs from the desktop app, and how `android.yml` / `release.yml` produce and publish the APK
+(including the signing secrets): [ANDROID.md](ANDROID.md).
+
 ## Live runs ("Share to Discord")
 
 A player links souldew to their Discord account once (Settings › Discord › "Live runs", with the code from `/live connect`)

@@ -50,55 +50,74 @@ Option 1 is the plan, and it holds up. Checked on this PC with a real Node 18.20
 
 So the Android build can bundle the server as it is. `engines` (>=22.15) is only a declaration; the bundled Node is 18.
 
-What the Android build leaves out: the Java randomizer (no JRE), the native fast player and 3DS player
-(`tools/native`, `tools/ctr`), the Electron shell, the self-updater. Those routes already fall back or hide themselves
-when their tools are missing.
+## What the app has (and what it leaves out)
 
-## Tooling on this PC (checked)
+- **Server and web app**: the unchanged souldew server on nodejs-mobile, shown in a full-screen WebView (landscape,
+  immersive, ROMs through the system file picker – no storage permission needed).
+- **Game Boy, Game Boy Color, Game Boy Advance, DS**: the built-in browser emulator (EmulatorJS) with the on-screen pad.
+- **Randomizer** (Gen 1–7): UPR ZX and the bridge converted to DEX (`scripts/android-assets.mjs`) and run by Android's
+  own runtime. `server/lib/toolchain.mjs` uses `dalvikvm64`, not `app_process`: `app_process` appends the device's
+  `dalvik.vm.heapsize` (512 MB) after any `-Xmx`, `dalvikvm` takes the heap as given. The heap has to fit into the low
+  4 GB of address space: `-Xmx1800m` is the most that starts (1900m aborts), and with it Omega Ruby randomizes in about a
+  minute (a 1.9 GB game written to the app's folder). Checked on a Snapdragon 8 Gen 3 tablet.
+- **3DS** (arm64 only): `ctrhost` (`native/ctr-host`) and Azahar's libretro core with `native/azahar-patch/*.patch`, built by
+  `scripts/build-ctr-android.mjs` and packed as `libctrhost.so` / `libazahar_libretro.so`: Android lets an app run and
+  `dlopen` files only from its native library folder (`NodeService` hands the path over as `SLS_NATIVE_DIR`,
+  `server/lib/ctr.mjs` looks there). Needs Vulkan (the system's `libvulkan.so`). The page gets an on-screen pad
+  (`web/lib/ctrpad.mjs`: Circle Pad, D-pad, A/B/X/Y, L/R, Start/Select).
+- **Left out**: the native fast player (`tools/native`, DS/GBA/GB through retrohost), the Electron shell and its updater,
+  external emulators (Azahar, melonDS, mGBA), OBS overlays (no OBS for Android – the Stream section is hidden). Settings ›
+  Controls and the keyboard help are hidden on touch screens too.
 
-| Piece | State |
-|---|---|
-| Android SDK | `ANDROID_HOME` set, platform 36, build-tools 35 and 36, platform-tools (adb) |
-| Command-line tools | installed (`cmdline-tools/latest`; its `sdkmanager` is a deprecated wrapper that mangles `;` in package names – use `android --sdk=<sdk> sdk install ndk/27.2.12479018`) |
-| NDK + CMake | installed: NDK 27.2.12479018 (r27c), CMake 3.22.1 with Ninja – for the small JNI bridge that starts `libnode.so` |
-| Gradle | wrapper in `android/` (Gradle 8.14.3, Android Gradle Plugin 8.11.1) |
-| Java | JDK 21 (Temurin) installed for Gradle; point `JAVA_HOME` at it (Java 25 is also installed, not used) |
-| Device | none connected over adb yet |
+### Things that differ on Android and are easy to break
 
-## Steps
+- **No ICU in nodejs-mobile**: regexes with `\p{L}` / `\p{N}` throw "Invalid property name". Keep new server/shared code
+  free of them (or guard like `shared/routes.mjs` does); `normalize()`, `Intl` and `localeCompare` are reduced too.
+- **Only `lib*.so` files in the native library folder can be run**, and Android refuses code from files the app can write:
+  the randomizer jar is made read-only before it is used.
+- **The file picker must not filter by type**: the WebView turns the page's `.gba,.nds,…` into MIME types and only `.zip`
+  has one, so every ROM would be greyed out. `MainActivity` opens the picker for `*/*`.
+- **Memory**: a 3DS game needs about 2 GB free for the randomizer plus the game's 2 GB copy on disk.
 
-1. ~~Server on Node 18~~ – done, see above (the 18 test files that didn't load could still be made to run there).
-2. ~~Install the missing SDK parts~~ – done (JDK 21 too).
-3. ~~Android project in `android/`~~ – done: `MainActivity` (immersive landscape WebView, file picker, back button,
-   HTML fullscreen), `NodeService` (foreground service, unpacks the assets, starts Node), JNI `native-lib.cpp`.
-4. ~~Packaging script~~ – done: `node scripts/android-assets.mjs` fills `android/app/src/main/assets/souldew` (48 MB).
-5. ~~nodejs-mobile~~ – done on this PC (SHA-256 of the zip: BD7321EA…C2AF, 55 MB; not in git, re-download from the release page if missing). Download `nodejs-mobile-v18.20.4-android.zip` and unpack it so that
-   `android/app/libnode/bin/<abi>/libnode.so` (arm64-v8a, x86_64) and `android/app/libnode/include/node/*.h` exist.
-   The build then compiles the JNI bridge and bundles `libnode.so`; without it the app builds (37 MB debug APK) but
-   shows "the Node runtime is not bundled".
-6. Debug APK over adb to the phone (`cd android && gradlew assembleDebug`, then `adb install`); then signing and a release build.
+## Building
 
-## Build
+Needs: Node 22, a JDK 21, the Android SDK (platform 36, build-tools 36, NDK 27.2.12479018, CMake 3.22.1), and for the 3DS
+part git, CMake ≥ 3.25 and Ninja.
 
 ```
-node scripts/android-assets.mjs
-cd android
-$env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-21.0.13.9-hotspot"
-.\gradlew.bat assembleDebug      # app/build/outputs/apk/debug/app-debug.apk
+node scripts/fetch-nodejs-mobile.mjs      # Node 18 for Android (SHA-256 pinned) → android/app/libnode
+node scripts/build-ctr-android.mjs        # 3DS host + Azahar core → android/app/ctr/arm64-v8a (long; --host-only skips the core)
+node scripts/android-assets.mjs           # server, web app, randomizer → android/app/src/main/assets
+cd android && ./gradlew assembleDebug     # app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## 3DS on Android: Azahar built into the app (plan)
+`./gradlew assembleRelease -PsouldewAbis=arm64-v8a` builds the phone-only release APK (the default is arm64 + x86_64, for
+emulators). The version comes from `package.json` (`2.7.4` → versionName 2.7.4, versionCode 20704). On Windows set
+`$env:JAVA_HOME` to the JDK 21 first. `scripts/android-install.ps1` does the build, installs on a connected device and
+saves its log (USB debugging on; some phones ask for a confirmation on the screen for each install).
 
-Azahar itself ships an Android libretro core (its release notes mention building it with NDK r27d), so the desktop
-player's design carries over: `ctrhost` (native/ctr-host) loads `azahar_libretro` with Vulkan and talks to the server
-over stdin/stdout. The tablet used for testing (OPD2403: Snapdragon 8 Gen 3, Adreno, 7.7 GB RAM, Vulkan 1.3) is a good
-target; weaker phones may struggle.
+If the Azahar checkout (`_ref/azahar-<tag>`) was patched by an older version of the patches, reset it
+(`git checkout -- .` inside it) before building again: the script applies each patch once.
 
-1. Build `azahar_libretro.so` (arm64-v8a) from Azahar 2126.2 with NDK r27 and `native/azahar-patch/souldew-memory.patch`
-   (live memory reads). Needs an Azahar checkout with submodules and a long build; no Android core exists with the patch.
-2. Build `ctrhost` for Android (NDK, PIE executable, system `libvulkan.so`; `compat.h` is POSIX, so few changes). Ship
-   both as `lib*.so` files in the APK's native library folder: Android lets an app execute and `dlopen` files there,
-   not from its data folder.
-3. `server/lib/ctr.mjs`: on Android look in the native library folder (path handed over by `NodeService`).
-4. Hide the "Azahar app" fallback and the desktop-only 3DS renderer settings on Android.
-5. Test with a decrypted 3DS game on the tablet: picture, sound, touch (both screens), live party data, save states.
+## GitHub Actions and releases
+
+- `.github/workflows/android.yml` builds the APK (`souldew-<version>-android-arm64.apk`) on every push that touches the app,
+  the server or the web app, and on demand. The Azahar core (20–40 min) is cached on the patches, the host source and the
+  build script.
+- `.github/workflows/release.yml` calls it for a `v*` tag and attaches the APK to the GitHub release next to the desktop
+  files. The APK is **not** part of the signed `latest.json` (Android has no in-app updater: install the new APK over the
+  old one), and an Android failure doesn't stop the desktop release.
+- **Signing**: set the repository secrets `ANDROID_KEYSTORE_B64` (`base64 -w0 souldew.jks`), `ANDROID_KEYSTORE_PASSWORD`,
+  `ANDROID_KEY_ALIAS` (and `ANDROID_KEY_PASSWORD` if it differs). Create the key once
+  (`keytool -genkeypair -v -keystore souldew.jks -alias souldew -keyalg RSA -keysize 4096 -validity 36500`) and keep it
+  safe: an app signed with another key can't be updated. Without the secrets the APK is signed with the debug key – fine for
+  testing, not for publishing.
+- Licences: Azahar is GPL-2.0-or-later, souldew GPL-3.0; the corresponding source of the 3DS libraries is the Azahar tag
+  plus `native/azahar-patch/*.patch` in this repository.
+
+## Not done yet / open
+
+- Play Store or F-Droid packaging (an AAB, a store listing, a privacy policy for the app).
+- 3DS: tested with Omega Ruby only; sound, speed and save states on slower chips; a phone without Vulkan can't run it.
+- The 18 test files that don't load on Node 18 (`registerHooks`, `zlib.crc32`, `mock.timers` in the tests themselves).
+- Fullscreen and the landscape lock inside the WebView on other devices.
