@@ -37,6 +37,10 @@ android {
         sourceSets["main"].jniLibs.srcDir("libnode/bin")
     }
 
+    // The 3DS player: ctr/arm64-v8a/libctrhost.so (native/ctr-host built as an executable) and libazahar_libretro.so
+    // (Azahar with native/azahar-patch). Files named lib*.so are the only ones an app may run (see docs/ANDROID.md).
+    sourceSets["main"].jniLibs.srcDir("ctr")
+
     buildTypes {
         release { isMinifyEnabled = false }
     }

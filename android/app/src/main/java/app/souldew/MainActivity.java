@@ -50,7 +50,7 @@ public class MainActivity extends Activity {
         status.setTextColor(Color.WHITE);
         status.setTextSize(16);
         status.setGravity(Gravity.CENTER);
-        status.setText("Starting souldew…");
+        status.setVisibility(View.GONE); // only for an error: while the server starts the screen stays black, the web app's own loader follows
         root.addView(status, new FrameLayout.LayoutParams(-1, -1));
 
         web = new WebView(this);
@@ -74,7 +74,13 @@ public class MainActivity extends Activity {
                 if (pending != null) pending.onReceiveValue(null);
                 pending = cb;
                 try {
-                    startActivityForResult(p.createIntent(), PICK);
+                    // No type filter: createIntent() turns the page's ".gba,.nds,…" list into MIME types, and only ".zip"
+                    // has one – the picker would then grey out every ROM. The page checks the extensions itself.
+                    Intent pick = new Intent(Intent.ACTION_GET_CONTENT)
+                            .addCategory(Intent.CATEGORY_OPENABLE)
+                            .setType("*/*")
+                            .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, p.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE);
+                    startActivityForResult(pick, PICK);
                 } catch (Exception e) {
                     pending = null;
                     return false;
@@ -107,7 +113,10 @@ public class MainActivity extends Activity {
             while (!closing) {
                 if (NodeService.state < 0) {
                     final String msg = "souldew can't start: " + NodeService.error;
-                    ui.post(() -> status.setText(msg));
+                    ui.post(() -> {
+                        status.setText(msg);
+                        status.setVisibility(View.VISIBLE);
+                    });
                     return;
                 }
                 try {

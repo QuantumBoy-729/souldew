@@ -61,14 +61,15 @@ public class NodeService extends Service {
                 final AssetManager assets = getAssets();
                 final String version = BuildConfigStamp.version(this);
                 final File cache = getCacheDir();
+                final String nativeDir = getApplicationInfo().nativeLibraryDir; // the 3DS host and core are packed there
                 // big stack: Node needs more than a default Java thread has
-                new Thread(null, () -> run(files, cache, assets, version), "node", 4L * 1024 * 1024).start();
+                new Thread(null, () -> run(files, cache, assets, version, nativeDir), "node", 4L * 1024 * 1024).start();
             }
         }
         return START_STICKY;
     }
 
-    private static void run(File files, File cache, AssetManager assets, String version) {
+    private static void run(File files, File cache, AssetManager assets, String version, String nativeDir) {
         try {
             File app = new File(files, "souldew-app");
             File stamp = new File(app, ".stamp");
@@ -85,6 +86,7 @@ public class NodeService extends Service {
                     "NO_OPEN=1",
                     "HOME=" + files.getAbsolutePath(),
                     "TMPDIR=" + cache.getAbsolutePath(),
+                    "SLS_NATIVE_DIR=" + nativeDir,
             };
             String[] args = {"node", new File(app, "server/index.mjs").getAbsolutePath()};
             state = 2;

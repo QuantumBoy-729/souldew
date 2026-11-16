@@ -39,6 +39,10 @@ Option 1 is the plan, and it holds up. Checked on this PC with a real Node 18.20
     were not run on Node 18 at all.
   - 2 tests use the Node 22 form of `mock.timers`.
   - `discoverRoots` fails on this Windows PC on Node 22 as well.
+- nodejs-mobile is built **without ICU**: regexes with `\p{L}` / `\p{N}` throw "Invalid property name" (found on the
+  tablet: `shared/routes.mjs` and `shared/trophies.mjs` crashed the server at start; both now fall back to Latin ranges
+  when the property regex can't be built). Keep new server/shared code free of `\p{…}` (or guard it the same way);
+  `normalize()`, `Intl` and `localeCompare` are also reduced on such builds.
 - Two things only look like problems on Node 18 and need a flag in tests, not in the app: there is no global
   `crypto` (`web/lib/sync.mjs` and `invitecode.mjs` are browser modules the tests load in Node; the WebView has it,
   as long as the page is a secure context – `http://127.0.0.1` is) and `fetch` to `localhost` doesn't fall back to
@@ -82,3 +86,19 @@ cd android
 $env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-21.0.13.9-hotspot"
 .\gradlew.bat assembleDebug      # app/build/outputs/apk/debug/app-debug.apk
 ```
+
+## 3DS on Android: Azahar built into the app (plan)
+
+Azahar itself ships an Android libretro core (its release notes mention building it with NDK r27d), so the desktop
+player's design carries over: `ctrhost` (native/ctr-host) loads `azahar_libretro` with Vulkan and talks to the server
+over stdin/stdout. The tablet used for testing (OPD2403: Snapdragon 8 Gen 3, Adreno, 7.7 GB RAM, Vulkan 1.3) is a good
+target; weaker phones may struggle.
+
+1. Build `azahar_libretro.so` (arm64-v8a) from Azahar 2126.2 with NDK r27 and `native/azahar-patch/souldew-memory.patch`
+   (live memory reads). Needs an Azahar checkout with submodules and a long build; no Android core exists with the patch.
+2. Build `ctrhost` for Android (NDK, PIE executable, system `libvulkan.so`; `compat.h` is POSIX, so few changes). Ship
+   both as `lib*.so` files in the APK's native library folder: Android lets an app execute and `dlopen` files there,
+   not from its data folder.
+3. `server/lib/ctr.mjs`: on Android look in the native library folder (path handed over by `NodeService`).
+4. Hide the "Azahar app" fallback and the desktop-only 3DS renderer settings on Android.
+5. Test with a decrypted 3DS game on the tablet: picture, sound, touch (both screens), live party data, save states.

@@ -19,9 +19,13 @@ import { identifyCtr } from '../../shared/ctr.mjs';
 import { nextRenderer, rendererFailure, withRenderer } from './ctrrenderer.mjs';
 
 export const PLATFORM_DIR = `${process.platform}-${process.arch}`;
-const EXE = process.platform === 'win32' ? 'ctrhost.exe' : 'ctrhost';
-const CORE = process.platform === 'win32' ? 'azahar_libretro.dll' : process.platform === 'darwin' ? 'azahar_libretro.dylib' : 'azahar_libretro.so';
-const VULKAN = { darwin: 'libMoltenVK.dylib', win32: 'vulkan-1.dll', linux: 'libvulkan.so.1' }[process.platform];
+// Android: the app's native library folder (SLS_NATIVE_DIR, set by NodeService) is the one place an app may run files
+// from – the host is packed as libctrhost.so (an executable with a library's name), the core as libazahar_libretro.so,
+// and the system has its own Vulkan loader (libvulkan.so).
+const ANDROID = process.platform === 'android';
+const EXE = ANDROID ? 'libctrhost.so' : process.platform === 'win32' ? 'ctrhost.exe' : 'ctrhost';
+const CORE = ANDROID ? 'libazahar_libretro.so' : process.platform === 'win32' ? 'azahar_libretro.dll' : process.platform === 'darwin' ? 'azahar_libretro.dylib' : 'azahar_libretro.so';
+const VULKAN = { darwin: 'libMoltenVK.dylib', win32: 'vulkan-1.dll', linux: 'libvulkan.so.1', android: 'libvulkan.so' }[process.platform];
 
 /** Message types of the protocol (ctrhost.c). */
 export const MSG = { HELLO: 1, VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7 };
@@ -42,6 +46,7 @@ export function systemVulkan({ platform = process.platform, env = process.env, e
 
 /** Where the 3DS tools are, the first folder that has the host and the core. */
 export function ctrDirs() {
+  if (ANDROID) return process.env.SLS_NATIVE_DIR ? [process.env.SLS_NATIVE_DIR] : [];
   return [join(BUNDLED_TOOLS, 'ctr', PLATFORM_DIR), join(TOOLS_DIR, 'ctr', PLATFORM_DIR), ...(DEV ? [join(APP_ROOT, 'tools', 'ctr', PLATFORM_DIR)] : [])];
 }
 
@@ -66,7 +71,7 @@ export function ctrTools({ azaharApp = null } = {}) {
     else if (systemVulkan()) vulkan = VULKAN;
     else return { ok: false, missing: 'vulkan', dir };
   }
-  return { ok: true, dir, host: join(dir, EXE), core: join(dir, CORE), vulkan, souldewCore: existsSync(join(dir, 'SOULDEW_CORE')) };
+  return { ok: true, dir, host: join(dir, EXE), core: join(dir, CORE), vulkan, souldewCore: ANDROID || existsSync(join(dir, 'SOULDEW_CORE')) };
 }
 
 /** Is the 3DS game file an encrypted dump? (Azahar plays decrypted games only.) Unreadable / unknown: false. */
