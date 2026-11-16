@@ -55,8 +55,8 @@ when their tools are missing.
 | Piece | State |
 |---|---|
 | Android SDK | `ANDROID_HOME` set, platform 36, build-tools 35 and 36, platform-tools (adb) |
-| Command-line tools / sdkmanager | missing |
-| NDK + CMake | missing – needed for the small JNI bridge that starts `libnode.so` |
+| Command-line tools | installed (`cmdline-tools/latest`; its `sdkmanager` is a deprecated wrapper that mangles `;` in package names – use `android --sdk=<sdk> sdk install ndk/27.2.12479018`) |
+| NDK + CMake | installed: NDK 27.2.12479018 (r27c), CMake 3.22.1 with Ninja – for the small JNI bridge that starts `libnode.so` |
 | Gradle | not on PATH; the Android project brings its own wrapper |
 | Java | Temurin 25 – check which Gradle / Android Gradle Plugin versions accept it (17 or 21 is the safe choice) |
 | Device | none connected over adb yet |
@@ -64,7 +64,7 @@ when their tools are missing.
 ## Steps
 
 1. ~~Server on Node 18~~ – done, see above (the 18 test files that didn't load could still be made to run there).
-2. Install the missing SDK parts (cmdline-tools, NDK, CMake) and pick a JDK for Gradle.
+2. ~~Install the missing SDK parts~~ – done. Still to pick: a JDK for Gradle (17 or 21; 25 is what is installed).
 3. Android project in `android/`: Gradle wrapper, `app` module, manifest, `MainActivity` (WebView, immersive mode,
    file picker for ROMs, back button), `NodeService`, JNI start of nodejs-mobile.
 4. Packaging script: copy `server/ shared/ web/` and production `node_modules` into the app's assets.
