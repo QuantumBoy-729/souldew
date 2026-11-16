@@ -1478,6 +1478,20 @@ dialog.nag[open] { animation: nag-in .16s steps(3, end); }
 .live-runs .live-code { width: 11ch; font-family: var(--font-mono); font-size: 16px; letter-spacing: .12em; text-transform: uppercase; }
 .live-runs .live-linked { gap: 8px 12px; align-items: center; }
 .modal-foot > .btn.live-share, .modal-foot > .live-share-done { margin-right: auto; }
+/* "Post to the Hall of Fame" after a won run: the card's gold, quiet until hovered */
+.btn.hof-btn { color: #f5dca2; border-color: #6b5426; background: linear-gradient(#4a3a1c, #382c15); }
+.btn.hof-btn:hover:not(:disabled) { background: linear-gradient(#5a4622, #44351a); border-color: #8a6c30; }
+.btn.hof-btn.done { color: var(--ok-ink); border-color: #2f4a3f; background: #1d2a25; opacity: 1; }
+.btn.hof-btn svg { flex: none; }
+.hof-offer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 14px; padding: 12px; border-radius: var(--r-l);
+  background: linear-gradient(180deg, rgba(225, 176, 90, .08), rgba(225, 176, 90, .02)); border: 1px solid rgba(225, 176, 90, .22); text-align: left; }
+.hof-preview { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: var(--r-m); border: 1px solid #0d0c10; background: #121116; }
+.hof-preview.placeholder { display: grid; place-items: center; color: #6b5426; }
+.hof-copy { display: grid; gap: 6px; }
+.hof-copy > b { display: inline-flex; align-items: center; gap: 6px; color: #f5dca2; }
+.hof-copy p { margin: 0; }
+.hof-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
+.hof-inline .tiny { max-width: 52ch; }
 
 /* Controller navigation (web/lib/padnav.mjs): a clear ring around the focused control – only while the controller
    was the last input; the mouse or a key takes it away again. Focused controls keep clear of the page edges. */

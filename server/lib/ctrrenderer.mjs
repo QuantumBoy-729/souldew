@@ -4,7 +4,8 @@
 //   vulkan    Vulkan with the device the standalone Azahar creates (its optional features enabled properly)
 //   compat    Vulkan with only the core's own libretro device (the optional features hidden – 2.7.0's way)
 //   software  Azahar's software renderer: no GPU, slow (about 25–30 fps on an M1), but any driver runs it
-// A driver update changes the card's key (the driver is part of it): "auto" then tries Vulkan again.
+// A driver update changes the card's key (the driver is part of it): "auto" then tries Vulkan again. A step down also
+// goes back to 1× resolution (see CTR_SCALES).
 
 export const CTR_RENDERERS = ['auto', 'vulkan', 'compat', 'software'];
 /** The fallback order of "auto" – each step needs less from the graphics driver. */
@@ -63,11 +64,23 @@ export function rendererFailure({ exit, events = [], ms = 0, quit = false } = {}
   return exit.code !== 0 && exit.code != null;
 }
 
-/** The host's arguments with `--renderer mode` (replaced or added). */
-export function withRenderer(args, mode) {
+/** The host's arguments with `name value` (replaced or added). */
+export function withArg(args, name, value) {
   const out = [...args];
-  const i = out.indexOf('--renderer');
-  if (i >= 0) out[i + 1] = mode;
-  else out.push('--renderer', mode);
+  const i = out.indexOf(name);
+  if (i >= 0) out[i + 1] = String(value);
+  else out.push(name, String(value));
   return out;
 }
+
+/** The host's arguments with `--renderer mode` (replaced or added). */
+export const withRenderer = (args, mode) => withArg(args, '--renderer', mode);
+
+// Settings › Emulators › "3DS resolution": the core's internal resolution factor (citra_resolution_factor, ctrhost.c
+// --scale). Each step multiplies the picture's pixels – 1× 400×480 (both screens), 2× 800×960, 3× 1200×1440 – and so
+// the graphics card's work and what the host reads back and hands to the page every frame (≈7 MB at 3×). The Software
+// renderer and every step down of "auto" play at 1×: they are there for graphics cards that already struggle.
+export const CTR_SCALES = [1, 2, 3];
+export const validScale = (v) => (CTR_SCALES.includes(v) ? v : 1);
+/** The resolution factor a host starts with: the chosen one, 1× with the Software renderer. */
+export const scaleFor = (scale, renderer) => (renderer === 'software' ? 1 : validScale(scale));

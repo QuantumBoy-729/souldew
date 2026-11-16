@@ -137,7 +137,14 @@ test('a battery save that comes after the page has gone is stored where the play
 
 // ---- the real host --------------------------------------------------------------------------------------------------
 const hosts = []; // the real hosts started here – killed when a test failed half way
-test.after(() => hosts.forEach((p) => p.exitCode === null && p.kill('SIGKILL')));
+test.afterEach(() => hosts.splice(0).forEach((p) => p.exitCode === null && p.signalCode === null && p.kill('SIGKILL')));
+/** The exit code of a host that should end now – a test fails (instead of waiting forever) when it doesn't. */
+const exitOf = (p, exit = new Promise((res) => p.once('exit', (code) => res(code))), ms = 10000) => {
+  if (p.exitCode !== null) return Promise.resolve(p.exitCode);
+  let t;
+  const late = new Promise((_, rej) => (t = setTimeout(() => rej(new Error(`the host didn't end within ${ms / 1000} s`)), ms)));
+  return Promise.race([exit, late]).finally(() => clearTimeout(t));
+};
 const toolsDir = nativeDirs().find((d) => existsSync(join(d, EXE)) && existsSync(join(d, `gambatte_libretro.${EXT}`)));
 
 /**
@@ -271,7 +278,7 @@ test('the real host: RAM mirror, exact steps, cheats, save states, the battery s
 
     // a header that announces more than the host takes: it ends cleanly (as when souldew goes away)
     h.p.stdin.write(Buffer.concat([u32(1), u32(0x7fffffff)]));
-    assert.equal(await h.exit, 0);
+    assert.equal(await exitOf(h.p, h.exit), 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -286,7 +293,7 @@ test('the real host: QUIT hands over the last battery save; a ROM it can\'t load
     h.send(NCMD.STEP, u32(10));
     await h.until(() => h.events.some((e) => e.event === 'stepped'));
     h.send(NCMD.QUIT);
-    assert.equal(await h.exit, 0);
+    assert.equal(await exitOf(h.p, h.exit), 0);
     assert.ok(h.srams.length >= 1); // the counter changed the save: it came before the host left
 
     const bad = join(dir, 'bad.gb');
@@ -295,7 +302,8 @@ test('the real host: QUIT hands over the last battery save; a ROM it can\'t load
     let out = Buffer.alloc(0);
     p.stdout.on('data', (c) => (out = Buffer.concat([out, c])));
     p.stderr.on('data', () => {});
-    const code = await new Promise((res) => p.on('exit', res));
+    hosts.push(p);
+    const code = await exitOf(p);
     assert.equal(code, 1);
     const ev = splitMessages(out).messages.filter((m) => m.type === 7).map((m) => JSON.parse(m.payload.toString()));
     assert.ok(ev.some((e) => e.event === 'error'));

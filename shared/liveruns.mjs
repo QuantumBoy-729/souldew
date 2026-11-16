@@ -115,6 +115,10 @@ export function buildMeta(input = {}) {
     headline: field('headline', input.headline, LIMITS.headline),
     detail: field('detail', input.detail, LIMITS.detail),
     ...(typeof input.app === 'string' && /^\d+\.\d+\.\d+/.test(input.app) ? { app: input.app.slice(0, 20) } : {}),
+    // optional (the bot tags a #hall-of-fame post with them): the game's generation, ROM hack, randomized
+    ...(Number.isInteger(input.gen) && input.gen >= 1 && input.gen <= 9 ? { gen: input.gen } : {}),
+    ...(typeof input.hack === 'boolean' ? { hack: input.hack } : {}),
+    ...(typeof input.randomized === 'boolean' ? { randomized: input.randomized } : {}),
   };
   return { meta, changed };
 }
@@ -132,6 +136,8 @@ export function metaProblem(meta) {
   if (!meta.headline) return 'headline';
   if (!Array.isArray(meta.players) || meta.players.length > LIMITS.players
     || meta.players.some((p) => typeof p !== 'string' || p.length > LIMITS.player || hasLink(p))) return 'players';
+  if (meta.gen != null && !(Number.isInteger(meta.gen) && meta.gen >= 1 && meta.gen <= 9)) return 'gen';
+  for (const k of ['hack', 'randomized']) if (meta[k] != null && typeof meta[k] !== 'boolean') return k;
   return null;
 }
 

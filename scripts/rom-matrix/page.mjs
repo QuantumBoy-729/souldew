@@ -37,8 +37,9 @@ function helper() {
     // a Game Boy hack with moved RAM variables: the shifted addresses, as the play view uses them
     const wram = found?.gen <= 2 ? romloc?.wram || null : null;
     // an expanded GBA engine: the team searched for, the place through SaveBlock1 (as web/views/play.mjs does)
-    const expanded = found?.gen === 3 && romloc?.species?.engine === 'expanded';
-    const entry = wram ? { ...romwram.shiftEntry(found, wram), wram } : expanded ? parse.expandedEntry(found, romloc?.data?.maps3) : found;
+    // (or a decomp hack whose RAM moved: romloc.mjs gen3RamMoved)
+    const expanded = found?.gen === 3 && (romloc?.species?.engine === 'expanded' || !!romloc?.data?.maps3?.moved);
+    const entry = wram ? { ...romwram.shiftEntry(found, wram), wram } : expanded ? parse.expandedEntry(found, romloc?.data?.maps3, romloc?.items?.names) : found;
     const species = romloc?.species || null;
     // what the play view does (web/views/play.mjs): a GBA ROM's own species table – for an expanded engine also its own
     // item names and move numbers (server/lib/romloc.mjs ownTables3)

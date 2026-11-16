@@ -7,18 +7,28 @@
 // Messages are { u32 type, u32 length, payload } (little-endian), both ways.
 //   host → souldew   1 HELLO  json { width, height, fps, sampleRate }      sent once the game runs
 //                    2 VIDEO  u16 width, u16 height, u32 format (0 BGRA, 1 RGBA), pixels
-//                    3 AUDIO  s16 stereo samples
+//                    3 AUDIO  s16 stereo samples – fast-forward: the sound sped up by the real speed (at most 16×),
+//                             resampled to exactly real time (see ff_frame) – souldew's turbo mixer
+//                             (web/lib/turboaudio.mjs) plays it per Settings › "Turbo audio"
 //                    4 MEM    u32 count, count × { u32 addr, u32 len, bytes }  the watched regions, between frames
 //                    5 STATE  a save state (answer to SAVE)
 //                    6 LOG    text
-//                    7 EVENT  json  { event: 'gpu' | 'loaded' | 'error' | 'stateLoaded' | 'stats' | 'title', … }
+//                    7 EVENT  json  { event: 'gpu' | 'loaded' | 'error' | 'stateLoaded' | 'stats' | 'title' | 'written', … }
+//                                   stats (four times a second): fps, speed (real, 1 = normal), frame (emulated frames
+//                                   so far – the page measures fast-forward with it, not with the pictures it gets)
+//                                   ffrate { k }: fast-forward – the sound that follows is sped up k times (sent
+//                                   whenever k changes, right before the first sound made with it)
 //                                   gpu: the Vulkan device chosen (name, type, vendor, driver …) – sent before the core
 //                                   touches it, so a crash in the driver still says which one it was
 //   souldew → host   1 INPUT  u32 joypad bits (RETRO_DEVICE_ID_JOYPAD_*), s16 lx, ly, rx, ry, s16 px, py (pointer,
 //                             -0x7fff…0x7fff over the whole picture), u8 pressed
 //                    2 SPEED  f32 (1 = normal, 0 = paused, ≥ 100 = as fast as possible)
 //                    3 SAVE   –           4 LOAD  state bytes      5 WATCH  u32 count, count × { u32 addr, u32 len }
-//                    6 QUIT   –           7 RESET –                8 FRAMESKIP u32 (send every n-th picture in turbo)
+//                    6 QUIT   –           7 RESET –                8 FRAMESKIP u32 (ignored since 2.7.2: in turbo a
+//                             picture goes out about 60 times a second, whatever the speed)
+//                    9 WRITE  u32 id, u32 addr, u32 len (≤ 256, inside one 4 KB page of the game's heaps), the bytes
+//                             expected there now, the new bytes – a cheat; answered by the event { event: 'written',
+//                             id, ok, why } (see mem_write)
 // Memory reads go through souldew_read_memory (native/azahar-patch: the game process's virtual memory, page by page)
 // between two frames – never torn. Azahar's own core (no patch) runs the game without live data.
 // Builds on macOS, Linux and Windows (compat.h); scripts/build-ctr.mjs builds it.
@@ -253,12 +263,206 @@ static int16_t input_state(unsigned port, unsigned device, unsigned index, unsig
 // ---- audio: collected per frame, sent after it ------------------------------------------------------------------
 static int16_t *audio_buf;
 static size_t audio_n, audio_cap;
-static int audio_on = 1;
+
+// ---- fast-forward sound -------------------------------------------------------------------------------------------
+// While fast-forwarding the core makes k seconds of sound per second, k being the speed it really reaches – and on a
+// 3DS that swings from frame to frame (Pokémon Sun's overworld on a mid-range PC: anywhere between 1.1× and 3× within
+// a second). 2.7.2 averaged every frame's sound down by the speed measured over the last quarter second and threw
+// away whole frames once it was ahead of real time (as the fast player's host does – its cores hold their speed):
+// with a swinging speed the page got too little sound, then too much, and played it with ~10 holes a second.
+// Now the frames' sound goes into a queue and comes out resampled by k, exactly as many samples as wall-clock time
+// has passed – without holes. k follows the measured speed and how full the queue is (about FF_TARGET seconds); it is
+// glides (no jumps in pitch), and every change is announced right before the first sound made with it (event
+// "ffrate"), so souldew's turbo mixer can slow the sound back down by exactly the ratio it was sped up with.
+// A low-pass at the new Nyquist frequency goes first (two biquads – the plain average let the overtones fold back
+// into the audible range: harsh). Above FF_MAXK× the queue overflows and skips ahead, with a short crossfade.
+#define FF_MAXK 16.0
+#define FF_TARGET 0.15 // seconds of output kept in the queue (latency doesn't matter much for sped-up sound)
+#define FF_GLIDE 0.15  // seconds k takes to follow the speed (time constant)
+#define FF_XFADE 256   // output frames of crossfade where the queue skips ahead
+#define FF_PI 3.14159265358979323846
+#define FF_CHUNK 160  // output frames sent at least at a time (~5 ms)
+static struct {
+  float *q; // queue: interleaved stereo, `n` frames
+  size_t n, cap;
+  double pos;       // read position in the queue (frames, fractional)
+  double k;         // the ratio in use (announced)
+  double glide;     // where k is gliding
+  double kin;       // the speed the sound comes in at (smoothed)
+  double due;       // output frames owed to wall-clock time
+  int primed;       // the queue was full enough to start (again)
+  double xpos;      // where the queue skipped from (crossfade), and how many frames of it are left
+  int xleft;
+  double b[2][5];   // the low-pass: two biquads (b0 b1 b2 a1 a2) …
+  double z[2][2][2]; // … and their state [biquad][channel][2]
+  int lp;           // low-pass on
+  int16_t *out;
+  size_t ocap;
+  uint32_t holes;   // times the queue ran dry (diagnostics: stats)
+} ff;
+
+/** The low-pass for ratio k: 4th-order Butterworth at 0.45 × the output's Nyquist frequency (none near 1×). */
+static void ff_lowpass(double k) {
+  ff.lp = k > 1.05;
+  if (!ff.lp) return;
+  static const double qs[2] = {0.5412, 1.3066};
+  const double w = 2 * FF_PI * 0.45 * 0.5 / k; // (in the input's samples: its Nyquist is π)
+  for (int s = 0; s < 2; s++) {
+    const double c = cos(w), al = sin(w) / (2 * qs[s]), a0 = 1 + al;
+    ff.b[s][0] = (1 - c) / 2 / a0;
+    ff.b[s][1] = (1 - c) / a0;
+    ff.b[s][2] = (1 - c) / 2 / a0;
+    ff.b[s][3] = -2 * c / a0;
+    ff.b[s][4] = (1 - al) / a0;
+  }
+}
+
+/** A fresh start: turbo began (or ended). */
+static void ff_reset(double k) {
+  ff.n = 0;
+  ff.pos = 0;
+  ff.due = 0;
+  ff.primed = 0;
+  ff.xleft = 0;
+  ff.k = ff.glide = ff.kin = k;
+  memset(ff.z, 0, sizeof ff.z);
+  ff_lowpass(k);
+}
+
+/** The frame's sound (n stereo frames) into the queue, low-passed. */
+static void ff_push(const int16_t *d, size_t n) {
+  // drop what was read (but keep 2 frames before the read position – and the crossfade's source – for interpolation)
+  double keep = ff.xleft && ff.xpos < ff.pos ? ff.xpos : ff.pos;
+  size_t drop = keep > 3 ? (size_t)keep - 2 : 0;
+  if (drop > ff.n) drop = ff.n;
+  if (drop > 4096 || ff.n + n > ff.cap) {
+    memmove(ff.q, ff.q + drop * 2, (ff.n - drop) * 2 * sizeof *ff.q);
+    ff.n -= drop;
+    ff.pos -= (double)drop;
+    ff.xpos -= (double)drop;
+  }
+  if (ff.n + n > ff.cap) {
+    size_t cap = (ff.n + n) * 2;
+    float *q = realloc(ff.q, cap * 2 * sizeof *q);
+    if (!q) return; // out of memory: this frame's sound is left out
+    ff.q = q;
+    ff.cap = cap;
+  }
+  float *o = ff.q + ff.n * 2;
+  for (size_t i = 0; i < n; i++)
+    for (int c = 0; c < 2; c++) {
+      double x = d[i * 2 + c] / 32768.0;
+      if (ff.lp)
+        for (int s = 0; s < 2; s++) { // transposed direct form II
+          const double *b = ff.b[s];
+          double *z = ff.z[s][c];
+          const double y = b[0] * x + z[0];
+          z[0] = b[1] * x - b[3] * y + z[1];
+          z[1] = b[2] * x - b[4] * y;
+          x = y;
+        }
+      o[i * 2 + c] = (float)x;
+    }
+  ff.n += n;
+}
+
+/** The queue at position p, channel c (4-point Hermite; p ≥ 1 and p + 2 < n). */
+static double ff_at(double p, int c) {
+  const size_t i = (size_t)p;
+  const double t = p - (double)i;
+  const float *q = ff.q + c;
+  const double xm = q[(i - 1) * 2], x0 = q[i * 2], x1 = q[(i + 1) * 2], x2 = q[(i + 2) * 2];
+  const double c1 = 0.5 * (x1 - xm), c2 = xm - 2.5 * x0 + 2 * x1 - 0.5 * x2, c3 = 0.5 * (x2 - xm) + 1.5 * (x0 - x1);
+  return ((c3 * t + c2) * t + c1) * t + x0;
+}
+
+/** Up to `want` output frames into ff.out at ratio ff.k; returns how many there were. */
+static size_t ff_make(size_t want) {
+  if (ff.pos < 1) ff.pos = 1;
+  const double avail = (double)ff.n - 3 - ff.pos;
+  size_t m = avail > 0 ? (size_t)(avail / ff.k) : 0;
+  if (m > want) m = want;
+  if (ff.ocap < m) {
+    int16_t *o = realloc(ff.out, m * 2 * sizeof *o);
+    if (!o) return 0;
+    ff.out = o;
+    ff.ocap = m;
+  }
+  for (size_t j = 0; j < m; j++) {
+    for (int c = 0; c < 2; c++) {
+      double v = ff_at(ff.pos, c);
+      if (ff.xleft) { // equal-power crossfade from where the queue skipped
+        const double g = (double)ff.xleft / FF_XFADE;
+        v = v * sin((1 - g) * FF_PI / 2) + ff_at(ff.xpos, c) * sin(g * FF_PI / 2);
+      }
+      v *= 32768;
+      ff.out[j * 2 + c] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
+    ff.pos += ff.k;
+    if (ff.xleft) {
+      ff.xpos += ff.k;
+      ff.xleft--;
+    }
+  }
+  return m;
+}
+
+/** Fast-forward, after a frame: its sound into the queue, and the sped-up sound for `dt` seconds out to souldew. */
+static void ff_frame(double dt, double sample_rate) {
+  ff_push(audio_buf, audio_n / 2);
+  ff.due += dt * sample_rate;
+  if (ff.due > sample_rate * 0.1) ff.due = sample_rate * 0.1; // stalled (loading): the page went without meanwhile
+  double fill = ((double)ff.n - 3 - ff.pos) / ff.k / sample_rate; // seconds of output in the queue
+  if (fill > FF_TARGET * 3 && ff.k >= FF_MAXK * 0.99 && !ff.xleft) {
+    // faster than FF_MAXK×: skip ahead to the target (crossfaded)
+    ff.xpos = ff.pos;
+    ff.xleft = FF_XFADE;
+    ff.pos += (fill - FF_TARGET) * ff.k * sample_rate;
+    fill = FF_TARGET;
+  }
+  // the ratio: the speed the sound comes in at, nudged towards the queue's target fill, gliding there (no jumps in
+  // pitch); souldew hears of every change of more than 1 %, right before the sound made with it
+  if (dt > 0) ff.kin += ((double)(audio_n / 2) / (dt * sample_rate) - ff.kin) * (dt < FF_GLIDE ? dt / FF_GLIDE : 1);
+  double e = (fill - FF_TARGET) / FF_TARGET;
+  if (e < -1) e = -1;
+  if (e > 1.5) e = 1.5;
+  double to = ff.kin * (1 + 0.6 * e);
+  if (to < 1) to = 1;
+  if (to > FF_MAXK) to = FF_MAXK;
+  ff.glide += (to - ff.glide) * (dt < FF_GLIDE ? dt / FF_GLIDE : 1);
+  if (fabs(ff.glide / ff.k - 1) > 0.01) {
+    ff.k = ff.glide;
+    ff_lowpass(ff.k);
+    send_event("{\"event\":\"ffrate\",\"k\":%.4f}", ff.k);
+    fill = ((double)ff.n - 3 - ff.pos) / ff.k / sample_rate;
+  }
+  if (!ff.primed) {
+    // (re)starting: wait until the queue holds its target – one short gap instead of a crackle of small ones
+    if (fill < FF_TARGET * 0.6) {
+      ff.due = 0;
+      return;
+    }
+    ff.primed = 1;
+  }
+  const size_t want = (size_t)ff.due;
+  if (want < FF_CHUNK) return; // (at Max a frame takes well under a millisecond: its few samples go out together)
+  const size_t m = ff_make(want);
+  ff.due -= (double)m;
+  if (m) send_msg(3, ff.out, (uint32_t)(m * 2 * sizeof *ff.out));
+  if (m + 64 < want) { // ran dry (the game stalled)
+    ff.primed = 0;
+    ff.holes++;
+  }
+}
+
 static void audio_push(const int16_t *d, size_t frames) {
-  if (!audio_on) return;
+  if (!frames) return;
   if (audio_n + frames * 2 > audio_cap) {
-    audio_cap = (audio_n + frames * 2) * 2;
-    audio_buf = realloc(audio_buf, audio_cap * sizeof *audio_buf);
+    size_t cap = (audio_n + frames * 2) * 2;
+    int16_t *b = realloc(audio_buf, cap * sizeof *b);
+    if (!b) return; // out of memory: this frame's sound is left out
+    audio_buf = b;
+    audio_cap = cap;
   }
   memcpy(audio_buf + audio_n, d, frames * 2 * sizeof *d);
   audio_n += frames * 2;
@@ -1019,6 +1223,112 @@ static const uint8_t *mem_at(uint32_t addr, uint32_t len) {
   return NULL;
 }
 
+// ---- memory writes (cheats) ----------------------------------------------------------------------------------------
+// souldew's WRITE command: a few bytes inside one page of the game's heaps (the bag). Every write
+//   1. only into the game's heaps (application heap, linear heaps) – nothing else is ever touched
+//   2. only while the bytes there are still what souldew expects (`old`) – read through the core, so the game hasn't
+//      changed them since souldew looked
+//   3. through souldew_write_memory (native/azahar-patch): the core's own memory system writes at the game's virtual
+//      address – the process's page table, so the application heap (X/Y, Omega Ruby / Alpha Sapphire) and the linear
+//      heaps (Sun / Moon …) alike, on every OS – and the change is read back through the core
+// Between two frames on the core's thread, like the reads.
+//
+// An older core (souldew 2.7.2 and before) has no write call: then the page is looked for in the core's FCRAM block
+// (one allocation of 256 MB – every heap page of the game is a page of it, and the stack page in the memory map points
+// into it) by its content. Every page with the same 4 KB is tried – the new bytes go in, and only the page whose change
+// shows at the game's address keeps them; every other one is put back at once. The block's bounds come from the OS
+// (the read-write memory around that stack page). The scan reads the block once at most (a few ms).
+#define MAX_WRITE 256
+#define MAX_TRIES 64
+static const uint32_t write_ranges[][2] = {
+  {0x08000000, 0x10000000}, // application heap (X/Y, Omega Ruby / Alpha Sapphire)
+  {0x14000000, 0x1C000000}, // linear heap
+  {0x30000000, 0x40000000}, // linear heap, newer kernels (Sun / Moon, Ultra Sun / Ultra Moon)
+};
+static bool (*souldew_write_memory)(uint32_t addr, const void *data, uint32_t size);
+
+/** Is [addr, addr+len) inside one page of the game's heaps? */
+static bool write_allowed(uint32_t addr, uint32_t len) {
+  if (!len || len > MAX_WRITE || (addr & 0xFFF) + len > 0x1000) return false;
+  for (unsigned i = 0; i < sizeof write_ranges / sizeof *write_ranges; i++)
+    if (addr >= write_ranges[i][0] && (uint64_t)addr + len <= write_ranges[i][1]) return true;
+  return false;
+}
+
+/** A host pointer into the core's FCRAM block: the backing of a heap / stack region in the memory map. */
+static uintptr_t fcram_anchor(void) {
+  for (unsigned i = 0; i < memmap_n; i++) {
+    const struct retro_memory_descriptor *d = &memmap[i];
+    // (VRAM 0x1F000000 and the DSP's memory are other blocks)
+    if (d->ptr && d->len >= 0x1000 && (d->start < 0x14000000 || (d->start >= 0x30000000 && d->start < 0x40000000)))
+      return (uintptr_t)d->ptr + d->offset;
+  }
+  return 0;
+}
+
+/** The read-write memory around `p`, joined with the regions right before and after it, at most `span` each way. */
+static int rw_range(uintptr_t p, uintptr_t span, uintptr_t *lo, uintptr_t *hi) {
+  uintptr_t s, e;
+  if (!compat_rw_region(p, &s, &e)) return 0;
+  const uintptr_t min = p > span ? p - span : 0, max = p + span;
+  for (int i = 0; i < 64 && s > min; i++) {
+    uintptr_t s2, e2;
+    if (!compat_rw_region(s - 1, &s2, &e2) || e2 != s) break;
+    s = s2;
+  }
+  for (int i = 0; i < 64 && e < max; i++) {
+    uintptr_t s2, e2;
+    if (!compat_rw_region(e, &s2, &e2) || s2 != e) break;
+    e = e2;
+  }
+  *lo = s < min ? min : s;
+  *hi = e > max ? max : e;
+  return 1;
+}
+
+/** The fallback for a core without souldew_write_memory: the page found by its content (see above). */
+static const char *scan_write(uint32_t addr, const uint8_t *page, const uint8_t *old, const uint8_t *val, uint32_t len) {
+  const uintptr_t anchor = fcram_anchor();
+  uint8_t now[MAX_WRITE];
+  const uint32_t off = addr & 0xFFF;
+  uintptr_t lo, hi;
+  if (!anchor || !rw_range(anchor, 0x10000000, &lo, &hi)) return "unsupported";
+  // pages of the block lie a multiple of 4 KB from the anchor
+  uintptr_t first = anchor - ((anchor - lo) / 0x1000) * 0x1000;
+  int tries = 0;
+  for (uintptr_t c = first; c + 0x1000 <= hi && tries < MAX_TRIES; c += 0x1000) {
+    uint8_t *h = (uint8_t *)c;
+    if (h[off] != page[off] || memcmp(h, page, 0x1000)) continue;
+    tries++;
+    memcpy(h + off, val, len);
+    if (souldew_read_memory(addr, now, len) && !memcmp(now, val, len)) return "ok";
+    memcpy(h + off, old, len); // a copy of the page somewhere else – put back
+  }
+  return "notFound";
+}
+
+/**
+ * One write: "ok", or why not – "range" (outside the game's heaps, or not mapped), "changed" (the game holds other
+ * bytes there now), "unsupported" (a core without souldew's memory calls), "failed" (the core refused the write or it
+ * didn't read back), "notFound" (the fallback scan didn't find the page).
+ */
+static const char *mem_write(uint32_t addr, const uint8_t *old, const uint8_t *val, uint32_t len) {
+  if (!write_allowed(addr, len)) return "range";
+  if (!souldew_read_memory) return "unsupported";
+  uint8_t page[0x1000], now[MAX_WRITE];
+  const uint32_t vpage = addr & ~0xFFFu, off = addr & 0xFFF;
+  if (!souldew_read_memory(vpage, page, sizeof page)) return "range"; // (not mapped)
+  if (memcmp(page + off, old, len)) return "changed";
+  if (!souldew_write_memory) return scan_write(addr, page, old, val, len);
+  if (!souldew_write_memory(addr, val, len)) return "failed";
+  if (!souldew_read_memory(addr, now, len) || memcmp(now, val, len)) return "failed";
+  return "ok";
+}
+
+#define MAX_WRITES 16
+static struct pending_write { uint32_t id, addr, len; uint8_t old[MAX_WRITE], val[MAX_WRITE]; } writes[MAX_WRITES]; // (cmd_lock)
+static unsigned writes_n;
+
 #define MAX_WATCH 16
 static pthread_mutex_t cmd_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct watch_region { uint32_t addr, len; } watch[MAX_WATCH]; // written by the reader thread (cmd_lock)
@@ -1059,7 +1369,7 @@ static void send_mem(void) {
 
 // ---- commands from souldew ---------------------------------------------------------------------------------------
 static float speed = 1.0f;
-static int want_save, want_quit, want_reset, frameskip = 4;
+static int want_save, want_quit, want_reset;
 static uint8_t *load_data;
 static size_t load_len;
 
@@ -1129,7 +1439,23 @@ static void *reader(void *arg) {
       break;
     case 6: want_quit = 1; break;
     case 7: want_reset = 1; break;
-    case 8: if (h[1] >= 4) { uint32_t v; memcpy(&v, p, 4); frameskip = v ? (int)v : 1; } break;
+    case 8: break; // FRAMESKIP (older pages): pictures in turbo are paced by time now
+    case 9: // WRITE u32 id, u32 addr, u32 len, old[len], new[len]
+      if (h[1] >= 12) {
+        uint32_t id, addr, len;
+        memcpy(&id, p, 4), memcpy(&addr, p + 4, 4), memcpy(&len, p + 8, 4);
+        if (len && len <= MAX_WRITE && h[1] == 12 + 2 * len) {
+          if (writes_n < MAX_WRITES) {
+            struct pending_write *w = &writes[writes_n++];
+            w->id = id, w->addr = addr, w->len = len;
+            memcpy(w->old, p + 12, len);
+            memcpy(w->val, p + 12 + len, len);
+          } else {
+            send_event("{\"event\":\"written\",\"id\":%u,\"ok\":false,\"why\":\"busy\"}", id);
+          }
+        }
+      }
+      break;
     }
     pthread_mutex_unlock(&cmd_lock);
     free(p);
@@ -1202,6 +1528,9 @@ int main(int argc, char **argv) {
   SYM(unserialize, "retro_unserialize");
   souldew_read_memory = dlsym(lib, "souldew_read_memory");
   souldew_title_id = dlsym(lib, "souldew_title_id");
+  souldew_write_memory = dlsym(lib, "souldew_write_memory");
+  logf_("memory writes (cheats): %s", souldew_write_memory ? "through the core (souldew_write_memory)"
+                                      : souldew_read_memory ? "page scan (a core without souldew_write_memory)" : "none (Azahar's own core)");
 
   core.set_environment(environment);
   core.set_video_refresh(video_refresh);
@@ -1265,19 +1594,35 @@ int main(int argc, char **argv) {
   pthread_create(&th, NULL, reader, NULL);
   double next = now_s();
   uint64_t frame = 0;
-  int memtick = 0;
-  double stat_t = now_s();
+  const double sample_rate = av.timing.sample_rate > 0 ? av.timing.sample_rate : 32728;
+  double stat_t = now_s(), last_shown = 0, last_mem = 0, last_audio = now_s();
   uint64_t stat_frames = 0;
+  int was_turbo = 0;
+  // 1× runs at the pace the core makes its sound at: Azahar says 60 fps, but a 3DS frame is 547 samples at 32728 Hz
+  // (59.83 fps) – paced at 60 the game made 0.3 % more sound than real time, and every minute or so the page had to
+  // drop a stretch of it. Measured on the frames that have sound (a quiet core, the first frames: not counted).
+  double pace_fps = fps;
+  uint64_t pace_frames = 0, pace_samples = 0;
   for (;;) {
     pthread_mutex_lock(&cmd_lock);
     float sp = speed;
-    int quit = want_quit, save = want_save, reset = want_reset, skip = frameskip;
+    int quit = want_quit, save = want_save, reset = want_reset;
     uint8_t *ld = load_data;
     size_t ll = load_len;
     want_save = want_reset = 0;
     load_data = NULL;
+    static struct pending_write wq[MAX_WRITES];
+    unsigned wn = writes_n;
+    memcpy(wq, writes, wn * sizeof *wq);
+    writes_n = 0;
     pthread_mutex_unlock(&cmd_lock);
     if (quit) break;
+    for (unsigned i = 0; i < wn; i++) {
+      const char *r = mem_write(wq[i].addr, wq[i].old, wq[i].val, wq[i].len);
+      const bool ok = !strcmp(r, "ok");
+      if (ok) logf_("memory write: %u bytes at %08X", wq[i].len, wq[i].addr);
+      send_event("{\"event\":\"written\",\"id\":%u,\"addr\":%u,\"len\":%u,\"ok\":%s,\"why\":\"%s\"}", wq[i].id, wq[i].addr, wq[i].len, ok ? "true" : "false", r);
+    }
     if (reset) core.reset();
     if (ld) {
       bool ok = core.unserialize(ld, ll);
@@ -1294,23 +1639,39 @@ int main(int argc, char **argv) {
     if (sp <= 0.0f) { // paused
       compat_sleep(0.01);
       next = now_s();
+      last_audio = next;
       continue;
     }
     const int turbo = sp > 1.01f;
-    want_frame = !turbo || (frame % (uint64_t)(skip > 0 ? skip : 1)) == 0;
-    audio_on = !turbo; // fast-forward: no sound (souldew plays its own turbo music)
+    if (turbo != was_turbo) { // a fresh start for the sped-up sound: the asked-for speed until it is measured
+      was_turbo = turbo;
+      ff_reset(turbo ? (sp > FF_MAXK ? FF_MAXK : sp) : 1);
+      if (turbo) send_event("{\"event\":\"ffrate\",\"k\":%.4f}", ff.k);
+    } else if (turbo && ff.kin > sp) {
+      ff.kin = sp; // a slower step: the game won't go faster than asked (a faster one: measured as it comes)
+    }
+    double t = now_s();
+    // turbo: a picture for the screen about 60 times a second, not one per emulated frame (at 1×: every one)
+    want_frame = !turbo || t - last_shown >= 1.0 / 62;
+    if (want_frame) last_shown = t;
     core.run();
     pthread_mutex_lock(&in_lock);
     if (touch_latch > 0) touch_latch--;
     pthread_mutex_unlock(&in_lock);
     if (++frame == 120) stage = "running the game";
     stat_frames++;
-    if (audio_n) {
-      send_msg(3, audio_buf, (uint32_t)(audio_n * sizeof *audio_buf));
-      audio_n = 0;
-    }
-    if (++memtick >= 6) { // ten times a second at normal speed
-      memtick = 0;
+    t = now_s();
+    if (!turbo) {
+      if (audio_n) send_msg(3, audio_buf, (uint32_t)(audio_n * sizeof *audio_buf));
+      if (audio_n && frame > 120) {
+        pace_frames++;
+        pace_samples += audio_n / 2;
+      }
+    } else ff_frame(t - last_audio, sample_rate); // fast-forward: sped up, resampled to real time (see ff_frame)
+    audio_n = 0;
+    last_audio = t;
+    if (t - last_mem >= 0.1) { // ten times a second, whatever the speed
+      last_mem = t;
       send_mem();
       // which title runs (the game, or an applet / the HOME menu in between)
       static uint64_t last_tid = 1;
@@ -1320,16 +1681,23 @@ int main(int argc, char **argv) {
         send_event("{\"event\":\"title\",\"titleId\":\"%016llX\"}", (unsigned long long)tid);
       }
     }
-    double t = now_s();
-    if (t - stat_t >= 2.0) {
-      send_event("{\"event\":\"stats\",\"fps\":%.1f,\"shown\":%llu}", stat_frames / (t - stat_t), (unsigned long long)frames_shown);
+    if (t - stat_t >= 0.25) { // four times a second: the page measures the real speed with the frame count
+      if (pace_frames >= 120) {
+        const double f = sample_rate * (double)pace_frames / (double)pace_samples;
+        if (fabs(f / fps - 1) < 0.02) pace_fps = f;
+      }
+      const double real = stat_frames / (t - stat_t) / pace_fps;
+      // (ffk / ffHoles: the fast-forward sound's ratio, and how often its queue ran dry – diagnostics)
+      send_event("{\"event\":\"stats\",\"fps\":%.1f,\"speed\":%.3f,\"shown\":%llu,\"frame\":%llu,\"ffk\":%.3f,\"ffHoles\":%u}", stat_frames / (t - stat_t), real,
+                 (unsigned long long)frames_shown, (unsigned long long)frame, turbo ? ff.k : 1.0, ff.holes);
       stat_t = t;
       stat_frames = 0;
     }
     if (sp >= 100.0f) { next = t; continue; } // as fast as it goes
-    next += 1.0 / (fps * sp);
+    next += 1.0 / (pace_fps * sp);
     if (next < t - 0.1) next = t; // fell behind (loading): don't race to catch up
     double wait = next - t;
+    if (wait > 0.1) wait = 0.1, next = t + 0.1; // (commands are read between frames – never sleep long)
     if (wait > 0) compat_sleep(wait);
   }
   // Not core.unload_game() / deinit(): Azahar's shutdown can crash after the last frame, and there is nothing left to

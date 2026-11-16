@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
-import { findEntry, readLiveParty, readLiveBattle, LiveTables, gen5Status } from '../shared/live/parse.mjs';
+import { findEntry, readLiveParty, readLiveBattle, withBattleHp, confirmFaints, LiveTables, gen5Status } from '../shared/live/parse.mjs';
 import { encryptPK4 } from '../shared/gen4save.mjs';
 import { statusKey } from '../shared/overlay.mjs';
 import { vanillaCapFor, gymCapsFamily } from '../shared/routes.mjs';
@@ -247,4 +247,90 @@ test('held items by name: the game\'s number in Gen 3, 4 and 5 (#15)', async () 
   assert.equal(itemName(155, 2, 'en'), '', 'no table for Gen 1/2');
   assert.equal(itemName(9999, 5, 'en'), '', 'an item only a ROM hack has');
   assert.equal(itemName(0, 5, 'en'), '');
+});
+
+// Gen 5 battle structs as Black 2 keeps them (captured in souldew's fast player, #12): { u32 → the Pokémon in the battle's
+// party copy, u32, u32, u16 species, u16 max HP, u16 HP, u8 ×6, u8 level } – the struct's address is the species'
+function battleStruct(m, addr, { pp, species, maxHp, hp, level }) {
+  const b = new Uint8Array(0x0c + 14);
+  const dv = new DataView(b.buffer);
+  dv.setUint32(0, pp, true);
+  dv.setUint16(0x0c, species, true);
+  dv.setUint16(0x0e, maxHp, true);
+  dv.setUint16(0x10, hp, true);
+  b[0x0c + 12] = level;
+  m.write(addr - 0x0c, b);
+}
+
+test('Black 2: a wild Pokémon that looks like a benched one fainting never kills it – battle structs are told by PID (#12)', () => {
+  const e = findEntry(TABLE, { platform: 'nds', code: 'IREO' });
+  // the player's Patrat (Lv. 3, 16 HP) leads and is switched out for Tepig, against a wild Patrat with the same level and max HP
+  const patrat = { pid: 0x0badf00d, species: 504, level: 3, hp: 16, maxHp: 16 };
+  const tepig = { pid: 0x7e9170aa, species: 498, level: 6, hp: 24, maxHp: 24 };
+  const wild = { pid: 0x5eed0042, species: 504, level: 3, hp: 16, maxHp: 16 };
+  const m = black2({ mons: [pk5(patrat), pk5(tepig)] });
+  const MINE = 0x02257d6c; // the battle's copy of the player's party
+  const FOE = 0x0225882c; // the wild one's
+  m.write(MINE, [6, 0, 0, 0, 2, 0, 0, 0, ...pk5(patrat), ...pk5(tepig)]);
+  m.write(FOE, [6, 0, 0, 0, 1, 0, 0, 0, ...pk5(wild)]);
+  const S = { patrat: 0x0225b1f0, tepig: 0x0225b414, wild: 0x0225b638 };
+  battleStruct(m, S.patrat, { pp: MINE + 8, ...patrat });
+  battleStruct(m, S.tepig, { pp: MINE + 8 + 220, ...tepig });
+  battleStruct(m, S.wild, { pp: FOE + 8, ...wild });
+  // a freed struct of an earlier battle where this Patrat fell: it points into a copy that is gone
+  battleStruct(m, 0x02240000, { pp: 0x02300008, ...patrat, hp: 0 });
+  m.write(0x021b5138, [0x00, 0x21]); // in battle
+  const state = {};
+  const poll = () => {
+    const party = readLiveParty(e, m.read, T, state).party;
+    const fight = readLiveBattle(e, m.read, T, state, party);
+    return { fight, party: withBattleHp(party, fight) };
+  };
+  for (let i = 0; i < 6; i++) poll(); // (the heap search takes a few polls)
+  let r = poll();
+  assert.deepEqual(r.party.map((x) => x.hp), [16, 24]);
+  assert.equal(r.fight.enemy.hp, 16);
+  // Tepig hits; the wild Patrat faints, and the benched Patrat grows to Lv. 4 from the shared EXP – its struct gets the new
+  // level and max HP (the save party keeps the old ones until the battle ends)
+  battleStruct(m, S.tepig, { pp: MINE + 8 + 220, ...tepig, hp: 17 });
+  battleStruct(m, S.wild, { pp: FOE + 8, ...wild, hp: 0 });
+  battleStruct(m, S.patrat, { pp: MINE + 8, ...patrat, level: 4, maxHp: 17, hp: 17 });
+  const realNow = Date.now;
+  try {
+    const t0 = realNow();
+    Date.now = () => t0 + 5000; // (past the 2 s between two heap searches)
+    r = poll();
+  } finally {
+    Date.now = realNow;
+  }
+  assert.equal(r.fight.enemy.hp, 0, 'the wild Patrat is down');
+  assert.deepEqual(r.party.map((x) => x.hp), [16, 17], 'the player\'s Patrat is not (its HP within the max HP the team shows until the battle ends)');
+  // a real faint still shows in the battle
+  battleStruct(m, S.tepig, { pp: MINE + 8 + 220, ...tepig, hp: 0 });
+  assert.deepEqual(poll().party.map((x) => x.hp), [16, 0]);
+});
+
+test('a Pokémon at 0 HP counts once two reads in a row say so – one odd read never files a death (#12)', () => {
+  const mon = (hp, key = 'a') => ({ key, species: 504, level: 4, hp, maxHp: 17 });
+  const st = {};
+  assert.deepEqual(confirmFaints([mon(17), mon(9, 'b')], st).map((m) => m.hp), [17, 9]);
+  assert.deepEqual(confirmFaints([mon(0), mon(9, 'b')], st).map((m) => m.hp), [17, 9], 'the first read at 0 keeps the HP before');
+  assert.deepEqual(confirmFaints([mon(17), mon(9, 'b')], st).map((m) => m.hp), [17, 9], 'it was a flicker');
+  assert.deepEqual(confirmFaints([mon(0), mon(9, 'b')], st).map((m) => m.hp), [17, 9]);
+  assert.deepEqual(confirmFaints([mon(0), mon(9, 'b')], st).map((m) => m.hp), [0, 9], 'the second read in a row: down');
+  assert.deepEqual(confirmFaints([mon(0), mon(9, 'b')], st).map((m) => m.hp), [0, 9], 'and it stays down');
+  // a team already down when tracking starts has no HP to hold
+  assert.deepEqual(confirmFaints([mon(0)], {}).map((m) => m.hp), [0]);
+  // the tracker files the death only from the confirmed read
+  const B2 = { id: 'b2', mode: 'soullink', players: { p1: { name: 'Lou' }, p2: { name: 'Kim' } }, game: { id: 'pokemon-black-2', code: 'IREO', system: 'nds' } };
+  const d = new RunDoc('t');
+  d._persistSoon = () => {};
+  d.set('enc:starter:p1', { outcome: 'caught', species: 504, key: 'a', level: 4 });
+  d.set('enc:starter:p2', { outcome: 'caught', species: 509, key: 'z', level: 4 });
+  const live = {};
+  const snap = (hp) => R.applySnapshot(d, B2, 5, 'p1', { source: 'live', party: confirmFaints([{ ...mon(hp), metLocation: 0 }], live) });
+  snap(17);
+  assert.deepEqual(snap(0).deaths, [], 'one read at 0: no death yet');
+  assert.equal(R.pairState(d, 'starter').state !== 'dead', true);
+  assert.deepEqual(snap(0).deaths, ['starter'], 'the next one confirms it');
 });

@@ -679,6 +679,22 @@ test('slower than requested (4× asked, 2.7× reached): the measured speed sets 
   assert.ok(run(2.7) > 0.95, 'by the measured 2.7×: normal pitch and tempo');
 });
 
+test('3DS: the host’s own ratio (exact) sets the slow-down and holds until the host says otherwise', () => {
+  const f = tune({ seed: 9 });
+  const m = new TurboMixer(SR, { seconds: 30 });
+  feed(m, tune(), 0, 3);
+  m.command({ type: 'speed', ratio: 4 });
+  // 4× asked, the game reaches 2.7× – the host says so (ffrate) right before the sound made with that ratio
+  m.command({ type: 'rate', ratio: 2.7, exact: true });
+  const a = feed(m, sped(f, 2.7), 0, 2);
+  assert.ok(shiftCorr(a, f, Math.round(0.6 * SR), Math.round(1.1 * SR), Math.round(0.8 * SR)) > 0.95, 'normal pitch and tempo');
+  m.command({ type: 'speed', ratio: 3 }); // a step on the toolbar: the host's ratio still holds until it says otherwise
+  assert.equal(m.rate, 2.7);
+  m.command({ type: 'rate', ratio: 1.6, exact: true });
+  m.command({ type: 'rate', ratio: 2.2 }); // the page's own measurement doesn't override the host's
+  assert.equal(m.rate, 1.6);
+});
+
 test('DS: a short new stretch of the same song does not replace the loop found before (fast-forward splits songs)', () => {
   const A = tune({ seed: 1, period: 6.4 });
   const m = new TurboMixer(SR, { seconds: 60 });

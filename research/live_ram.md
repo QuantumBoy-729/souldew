@@ -411,4 +411,25 @@ Gen 3 `68` (pokeruby/pokefirered `#define ITEM_RARE_CANDY 68`, pokeemerald enum 
 
 Gen 4/5 find SaveData through the party reader: its `saveBase` (pointer chain) or, after a scan, party address +
 8 − `partyMonsOffset`. A bag with nothing in it is refused (zeros pass every other check). Rare Candy is in the
-Items pocket in Gen 1–3 and in the Medicine pocket in Gen 4/5.
+Items pocket in Gen 1–3 and in the Medicine pocket in Gen 4–7.
+
+**Gen 6/7 (3DS, souldew's own player – researched 2026-11-15).** The bag is the save data's MyItem block, kept at a
+fixed address in the game process per game and update (the 3DS game's virtual memory; `addresses.json`
+`partyAddrs[].bag`). Pockets per PKHeX `PlayerBag6XY/6AO/7SM/7USUM.cs`; Gen 6 slots { u16 id, u16 count }, Gen 7 slots
+one u32 (`InventoryItem7.cs`): id bits 0–9, count 10–19, place in the Free Space pocket 20–29 (0 = not in it), NEW
+bit 30. 999 per slot, Rare Candy (50) in Medicine.
+
+| Game | Bag (Items pocket) | Medicine | Source |
+|---|---|---|---|
+| X/Y 1.5 | `0x08C67564` | `+0x968` (64) | Multi-PokemonFramework (semaj14, GPL-3) `Sources/Folders/Trainer.cpp` `Pouch::Items/Medicines` (its money `0x08C6A6AC` sits right before the trackers' badge byte `0x08C6A6B0`) |
+| X/Y 1.0 | `0x08C67554` | same | [derived] 1.5 − `0x10`, the distance the party and the badges move between the updates – **not checked in a game** |
+| ORAS 1.4 | `0x08C6EC70` | `+0x970` (64) | Multi-PokemonFramework (money `0x08C71DC0` right before the badges `0x08C71DC4`) |
+| ORAS 1.0 | `0x08C6AC80` | same | [derived] 1.4 − `0x3FF0` like the party and badges – **not checked in a game** |
+| Sun/Moon | `0x330D5934` | `+0xB48` (64) | Multi-PokemonFramework (1.2); **checked live in Sun 1.0**: the object's vtable at `0x330D5930` (PokeReader's bag base), the pockets, then the game's own pointers to its six pockets right behind the block (`0x330D6714`: Medicine, Items, TMs, Berries, Key Items, Z-Crystals); Hala's Sparkling Stone = `0x4000074D` (NEW, Free Space 0) |
+| Ultra Sun/Ultra Moon | `0x33011934` | `+0xB74` (60) | Multi-PokemonFramework (1.2: Medicine `0x330124A8`), PokeReader's bag base `0x33011930` (4 before, as in Sun); 1.0 = 1.2 like the party address – **not checked in a game** |
+
+Every slot of every pocket has to look like an item (id ≤ the game's last, count 1–999, Medicine and TM ids from
+PKHeX's lists), the bag can't be empty, and when the pointer table is there it must point at exactly these pockets.
+The 3DS host writes through the core's FCRAM block (the stack page in the libretro memory map points into it; the page
+is found by content and only kept where the change shows at the game's address – `native/ctr-host/ctrhost.c`
+`mem_write`), only inside the heaps and only while the bytes are still what souldew read.

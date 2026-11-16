@@ -419,6 +419,19 @@ app.on('second-instance', () => {
   }
 });
 app.on('window-all-closed', () => app.quit());
+
+// Quitting with a game running: the anonymous "playing now" count (server/lib/presence.mjs) hears "stopped" first –
+// at most 1.5 s, offline it gives up silently. Called off ("keep playing"): the next quit tells it again.
+let presenceStopped = false;
+app.on('before-quit', (e) => {
+  if (presenceStopped || !serverUrl) return; // (no server, no game)
+  presenceStopped = true;
+  e.preventDefault();
+  import('../server/lib/presence.mjs').then((m) => m.stopPresence(1500)).catch(() => {}).finally(() => app.quit());
+});
+app.on('sls-quit-cancelled', () => {
+  presenceStopped = false;
+});
 app.on('activate', () => {
   if (!win && serverUrl) createWindow();
 });
