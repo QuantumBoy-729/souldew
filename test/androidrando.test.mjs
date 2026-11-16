@@ -30,3 +30,22 @@ test('desktop: java -cp bridge folder first, then the jar', () => {
   assert.ok(cp.endsWith('/t/upr.jar'));
   assert.deepEqual(argv.slice(-3), ['SoulLinkBridge', 'info', '/r.gba']);
 });
+
+test('Android 3DS host: hardware vertex shaders off (the Adreno driver fails to build their pipelines)', async () => {
+  const { androidHostEnv } = await import('../server/lib/ctr.mjs');
+  assert.equal(androidHostEnv({ platform: 'win32' }), undefined);
+  assert.equal(androidHostEnv({ platform: 'linux' }), undefined);
+  const env = androidHostEnv({ platform: 'android', env: { PATH: '/x' } });
+  assert.equal(env.CTRHOST_OPT_citra_use_hw_shader, 'disabled');
+  assert.equal(env.PATH, '/x', 'the rest of the environment stays');
+});
+
+test('Android: "auto" never steps down to the software renderer (the core crashes without a GPU renderer there)', async () => {
+  const { nextRenderer, pickRenderer, chainFor } = await import('../server/lib/ctrrenderer.mjs');
+  assert.deepEqual(chainFor('android'), ['vulkan', 'compat']);
+  assert.equal(nextRenderer('compat', 'android'), null);
+  assert.equal(nextRenderer('compat', 'win32'), 'software');
+  // a remembered "software" (learned before) is not used on Android
+  assert.equal(pickRenderer({ setting: 'auto', memo: { k: 'software' }, lastGpu: 'k', platform: 'android' }).mode, 'vulkan');
+  assert.equal(pickRenderer({ setting: 'auto', memo: { k: 'software' }, lastGpu: 'k', platform: 'linux' }).mode, 'software');
+});

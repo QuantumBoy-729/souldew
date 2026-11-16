@@ -1,5 +1,5 @@
 import { html, useState, useEffect, useRef, useCallback } from '/vendor/htm-preact.mjs';
-import { useApp, Led, saveDiagnostics, copy } from '../lib/ui.mjs';
+import { useApp, Led, saveDiagnostics, copy, openExternal } from '../lib/ui.mjs';
 import { bridgeState } from '../lib/livebridge.mjs';
 import { IS_MAC, IS_WIN, IS_TOUCH, PLATFORM } from '../lib/platform.mjs';
 import { diag } from '../lib/diag.mjs';
@@ -104,7 +104,9 @@ export function PlayView() {
   }
   if (target.error) return html`<${PlayHome} />`;
   // 3DS: souldew's own player when its 3DS part is there (and Azahar isn't chosen in Settings), else Azahar on its own
-  if (target.system === '3ds' && (!status?.ctr?.ok || status?.config?.emulatorFor?.['3ds'] === 'azahar')) return html`<${ExternalPlay} target=${target} emu="azahar" />`;
+  // (a phone or tablet can't start a desktop Azahar: its own player or a pointer to the Azahar app)
+  if (target.system === '3ds' && IS_TOUCH && !status?.ctr?.ok) return html`<${NoCtrOnDevice} />`;
+  if (target.system === '3ds' && !IS_TOUCH && (!status?.ctr?.ok || status?.config?.emulatorFor?.['3ds'] === 'azahar')) return html`<${ExternalPlay} target=${target} emu="azahar" />`;
   const choice = status?.config?.emulatorFor?.[target.system] || 'builtin';
   if (choice !== 'builtin' && status?.emulators?.[choice]?.installed) return html`<${ExternalPlay} target=${target} emu=${choice} />`;
   if (running) return html`<${SwitchGame} next=${target} />`;
@@ -120,6 +122,21 @@ function ctrLayoutLabel(id) {
     bt: t('play.l3dsBt', 'Bottom screen above the top one'),
     top: t('play.l3dsTop', 'Top screen only'),
   }[id] || id;
+}
+
+/** Azahar's Android app: the releases page has the APK (the Play Store also lists it). */
+const AZAHAR_ANDROID_URL = 'https://github.com/azahar-emu/azahar/releases';
+
+/** A phone or tablet whose app has no built-in 3DS player (its libraries are missing): where to get Azahar instead. */
+function NoCtrOnDevice() {
+  const { navigate } = useApp();
+  return html`<div class="panel empty-state">
+    <${Icon} name="play" size=${64} />
+    <h2>${t('ctr.noPlayerTitle', 'The 3DS player isn’t available here')}</h2>
+    <p class="muted prose">${t('ctr.noPlayerDevice', 'This device can’t run souldew’s built-in 3DS player. Azahar for Android plays 3DS games in its own app – without live tracking.')}</p>
+    <div class="row"><button class="btn primary big" onClick=${() => openExternal(AZAHAR_ANDROID_URL)}>${t('ctr.getAzaharAndroid', 'Get Azahar for Android')}</button>
+      <button class="btn big" onClick=${() => navigate('play')}>${t('play.pickOther', 'Play something else')}</button></div>
+  </div>`;
 }
 
 /**
@@ -148,10 +165,12 @@ function CtrFailed({ fail, target, onClose }) {
     <div class="grow stack-s">
       <b>${t('ctr.failedTitle', 'The 3DS game has stopped')}</b>
       ${fail.message && html`<span class="small">${fail.message}</span>`}
-      ${!noAzahar && html`<span class="small muted">${t('ctr.failedHint', 'Some graphics cards and drivers can’t run souldew’s built-in 3DS player yet. Azahar, the free 3DS emulator, plays the same games – with live tracking. You can switch back any time in Settings › Emulators.')}</span>`}
+      ${!noAzahar && IS_TOUCH && html`<span class="small muted">${t('ctr.failedHintDevice', 'Azahar for Android plays the same games in its own app – without souldew’s live tracking.')}</span>`}
+      ${!noAzahar && !IS_TOUCH && html`<span class="small muted">${t('ctr.failedHint', 'Some graphics cards and drivers can’t run souldew’s built-in 3DS player yet. Azahar, the free 3DS emulator, plays the same games – with live tracking. You can switch back any time in Settings › Emulators.')}</span>`}
     </div>
     <div class="row">
-      ${!noAzahar && html`<button class="btn small primary" data-pad-first disabled=${busy} onClick=${toAzahar}>${t('ctr.useAzahar', 'Play 3DS games in Azahar')}</button>`}
+      ${!noAzahar && IS_TOUCH && html`<button class="btn small primary" data-pad-first onClick=${() => openExternal(AZAHAR_ANDROID_URL)}>${t('ctr.getAzaharAndroid', 'Get Azahar for Android')}</button>`}
+      ${!noAzahar && !IS_TOUCH && html`<button class="btn small primary" data-pad-first disabled=${busy} onClick=${toAzahar}>${t('ctr.useAzahar', 'Play 3DS games in Azahar')}</button>`}
       <button class="btn small ghost" onClick=${() => saveDiagnostics({ ctrFailed: fail })}><${Icon} name="save" size=${14} />${t('play.diag', 'Save diagnostics')}</button>
       <button class="btn small ghost" data-pad-back onClick=${onClose}>${t('play.close', 'Close game')}</button>
     </div>

@@ -4,7 +4,7 @@
 // (no Electron, no other tools/).
 // Needs: node, npm, a JDK (`jar`) and the Android SDK (build-tools: d8, a platform: android.jar).
 // Usage: node scripts/android-assets.mjs
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, copyFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, lstatSync, copyFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -29,7 +29,8 @@ try {
   copyFileSync(join(root, 'package.json'), join(scratch, 'package.json'));
   if (existsSync(join(root, 'package-lock.json'))) copyFileSync(join(root, 'package-lock.json'), join(scratch, 'package-lock.json'));
   run(win ? 'npm.cmd' : 'npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: scratch });
-  cpSync(join(scratch, 'node_modules'), join(out, 'node_modules'), { recursive: true });
+  // (.bin holds command-line links to the packages' scripts: not needed in the app, and a copied link points nowhere)
+  cpSync(join(scratch, 'node_modules'), join(out, 'node_modules'), { recursive: true, filter: (src) => !/[\\/]node_modules[\\/]\.bin([\\/]|$)/.test(src) });
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
@@ -83,5 +84,5 @@ function buildAndroidRandomizer() {
 }
 buildAndroidRandomizer();
 
-const size = (p) => readdirSync(p, { withFileTypes: true }).reduce((n, e) => n + (e.isDirectory() ? size(join(p, e.name)) : statSync(join(p, e.name)).size), 0);
+const size = (p) => readdirSync(p, { withFileTypes: true }).reduce((n, e) => n + (e.isDirectory() ? size(join(p, e.name)) : lstatSync(join(p, e.name)).size), 0);
 console.log(`assets ready: ${out} (${(size(out) / 1048576).toFixed(1)} MB)`);

@@ -28,6 +28,18 @@ const EXE = ANDROID ? 'libctrhost.so' : process.platform === 'win32' ? 'ctrhost.
 const CORE = ANDROID ? 'libazahar_libretro.so' : process.platform === 'win32' ? 'azahar_libretro.dll' : process.platform === 'darwin' ? 'azahar_libretro.dylib' : 'azahar_libretro.so';
 const VULKAN = { darwin: 'libMoltenVK.dylib', win32: 'vulkan-1.dll', linux: 'libvulkan.so.1', android: 'libvulkan.so' }[process.platform];
 
+/**
+ * Core options the host sets from its environment (ctrhost.c CTRHOST_OPT_<option>), per platform. Android: the hardware
+ * vertex shaders off – Adreno's driver (checked on an Adreno 750) answers vkCreateGraphicsPipelines with ErrorUnknown for
+ * the pipelines of Azahar's hardware vertex shaders, which Azahar turns into an abort a few seconds into the game
+ * (the first screen that needs one, e.g. Omega Ruby's language screen). Without them the game runs for minutes.
+ * → undefined where the host needs no change (it then inherits the server's environment).
+ */
+export function androidHostEnv({ platform = process.platform, env = process.env } = {}) {
+  if (platform !== 'android') return undefined;
+  return { ...env, CTRHOST_OPT_citra_use_hw_shader: 'disabled' };
+}
+
 /** Message types of the protocol (ctrhost.c). */
 export const MSG = { HELLO: 1, VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7 };
 export const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8, WRITE: 9 };
@@ -368,7 +380,7 @@ export class CtrSessions {
 
   /** Spawn the session's host (again, after relaunch: the page's stream goes on). */
   run(s) {
-    const env = this.hostEnv?.();
+    const env = this.hostEnv?.() ?? androidHostEnv();
     const child = this.spawn(s.exe, s.args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, ...(env ? { env } : {}) });
     Object.assign(s, { child, exit: null, recorded: false, held: false, events: [], heldErrors: [], startedAt: Date.now() });
     // the host may still step down (3DS, "auto"): its error event waits until it is clear the session doesn't go on
