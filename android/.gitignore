@@ -8,3 +8,4 @@ app/libnode/
 app/src/main/assets/souldew/
 *.jks
 *.keystore
+app/.cxx/
