@@ -4,7 +4,7 @@ name: Release
 # The tag must match "version" in package.json, and CHANGELOG.md needs a "## 2.1.0" section (the release notes).
 #
 # Windows: the installer is always built here (windows-latest).
-# Linux: the AppImage and the .deb are always built here (ubuntu-latest).
+# Linux: the AppImage and the .deb are always built here (ubuntu-24.04).
 # macOS: the DMG is built here only when the repository variable MACOS_RELEASE is "true" (Settings › Secrets and
 # variables › Actions › Variables) – macOS runners don't start for this repository at the moment.
 #
@@ -107,7 +107,7 @@ jobs:
   linux:
     name: Build the Linux AppImage and .deb
     needs: [ctr, native]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -184,7 +184,7 @@ jobs:
     # runs when Windows and Linux succeeded and macOS either succeeded or was skipped (not built here); the Android APK
     # is attached when it was built (needs.android.result is not checked)
     if: always() && needs.windows.result == 'success' && needs.linux.result == 'success' && (needs.macos.result == 'success' || needs.macos.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write # gh release create
     steps:
