@@ -9,6 +9,7 @@ import { runBridge } from './toolchain.mjs';
 import { checkCtrSpace, ctrProgress, ctrRandoError, hashFile, ncchSizeOf } from './ctrrando.mjs';
 import { toProperties } from '../../shared/randomizer-options.mjs';
 import { diffRoms } from '../../shared/nds.mjs';
+import { applyShinyOdds, cleanOdds, DEFAULT_ODDS } from '../../shared/shinypatch.mjs';
 import { catalog } from './library.mjs';
 import { writeFileAtomic, httpError } from './fsutil.mjs';
 import { ALL_SLOTS, MODES, slotsOf, defaultRunName } from '../../shared/slots.mjs';
@@ -430,6 +431,8 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       values: opts.values || {},
       seeds: seedsFor(slots, opts.seeds || existing?.randomizer?.seeds, !!opts.sharedSeed),
       sharedSeed: !!opts.sharedSeed,
+      // Gen 3 (GBA) only: shiny odds out of 65536 (8 = the game's 1/8192), patched into the ROM (shared/shinypatch.mjs)
+      ...(cleanOdds(opts.shinyOdds ?? existing?.randomizer?.shinyOdds) > DEFAULT_ODDS ? { shinyOdds: cleanOdds(opts.shinyOdds ?? existing?.randomizer?.shinyOdds) } : {}),
     },
     rules: stripLocalRules(opts.rules || existing?.rules || null), // the Discord webhook lives in the local config
     // outputs of slots the run no longer has (a rebuild with fewer players) would be offered for download
@@ -510,6 +513,13 @@ async function buildInto(opts, onLog, onProgress, bridge) {
       copyFileSync(patched.path, romOut);
       rmSync(dataOut, { force: true });
       rmSync(logOut, { force: true });
+    }
+    // shiny odds: patched into the finished GBA game, before its checksum is taken (every player gets the same patch)
+    if (manifest.randomizer.shinyOdds && ext === 'gba') {
+      const bytes = new Uint8Array(readFileSync(romOut));
+      const { sites, odds } = applyShinyOdds(bytes, manifest.randomizer.shinyOdds); // throws for a game it can't patch
+      writeFileSync(romOut, bytes);
+      onLog(`Shiny odds ${odds}/65536 patched into ${sites} places of the game for ${player.name}`);
     }
     // (a plain 3DS game isn't hashed – 1–4 GB, and each player may play their own release; a randomized one must be
     // byte-identical, its SHA-1 came from the stream above)

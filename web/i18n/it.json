@@ -979,6 +979,8 @@
   "new.toBoard": "Apri la bacheca SoulLink",
   "new.toBoardRun": "Apri la bacheca",
   "new.tweaks": "Modifiche al gioco",
+  "new.shinyOdds": "Probabilità di shiny",
+  "new.shinyOddsNote": "Applicata al gioco. Tutti i giocatori di una run SoulLink hanno la stessa probabilità. Il tracciamento dal vivo segna come shiny solo la probabilità normale di 1 su 8192.",
   "new.you": "Tu",
   "nz.capsHint": "Il livello dell’asso del prossimo boss. Rigido: superarlo è una violazione, non un avviso.",
   "nz.centers": "Limite di Centri Pokémon",

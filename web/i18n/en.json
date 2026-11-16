@@ -1393,6 +1393,8 @@
   "new.saveInvite": "Save invite",
   "new.seed": "Seed",
   "new.seeds": "Seeds",
+  "new.shinyOdds": "Shiny odds",
+  "new.shinyOddsNote": "Patched into the game. Every player of a SoulLink run gets the same odds. The live tracker still marks only the game’s own 1 in 8192 as shiny.",
   "new.stepBuild": "{n} · Build",
   "new.stepGame": "{n} · Game",
   "new.stepRandomizer": "{n} · Randomizer",

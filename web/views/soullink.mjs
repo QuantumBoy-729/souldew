@@ -507,6 +507,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
   // the host's call for everyone: the battle helper's type matchups (a restart keeps the old run's choice)
   const [typeHelp, setTypeHelp] = useState(() => from?.rules?.typeHelp !== false);
   const [seedMode, setSeedMode] = useState(from?.randomizer?.sharedSeed ? 'shared' : 'separate');
+  const [shinyOdds, setShinyOdds] = useState(from?.randomizer?.shinyOdds || 8); // Gen 3 (GBA) only, see shared/shinypatch.mjs
   const [seeds, setSeeds] = useState(() => Object.fromEntries(ALL_SLOTS.map((s) => [s, randomSeed()])));
   const [names, setNames] = useState(() => (from ? namesFrom(from, status?.config?.playerName || '') : { p1: status?.config?.playerName || '', p2: '', p3: '', p4: '' }));
   const [buildFor, setBuildFor] = useState('all');
@@ -557,6 +558,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
   const hackNoUpr = hack?.uprCompatible === 'no';
   const canRandomize = inspect && !inspect.info?.unsupported && !hackNoUpr;
   const ctr = inspect?.patched?.system === '3ds';
+  const gen3Gba = inspect?.patched?.system === 'gba' && gen === 3;
   // the other title of the game's pair (HeartGold → SoulSilver): partners may play it in a run without randomizer or hack
   const mate = !solo && game && !hack && !customHack && !patchId ? gameById(pairMate(game.variantOf || game.id)) : null;
   const step = { who: 1, game: 2, randomizer: 3, rules: 4, build: 5 };
@@ -577,6 +579,7 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
         // buildValues: drop what this generation lacks – stored in the run, so the other players build the same
         romId: rom.id, patchId, values: buildValues(values, gen), randomize: randomize && canRandomize, mode, progressId: pid,
         seeds: Object.fromEntries(slots.map((s) => [s, seeds[seedSlots.includes(s) ? s : 'p1']])), sharedSeed: !solo && seedMode === 'shared',
+        shinyOdds: gen3Gba ? shinyOdds : undefined,
         players, buildFor: solo || buildFor === 'all' ? slots : ['p1'],
         gameId: game?.variantOf || game?.id || null, gameTitle: hack?.name || customHack || (game ? gameTitle(game) : rom.title), hackId: hack?.id || null,
         hackName: !hack && customHack ? customHack : undefined,
@@ -693,6 +696,11 @@ function NewRun({ gameId, hackId, patchPick, romPick, from, mode: sectionMode })
                 onChange=${(v) => { setValues({ ...values, [f.key]: v }); setPresetId('custom'); }} />`)}
             </div></details>`)}
             <details class="group"><summary>${t('new.tweaks', 'Game tweaks')}</summary><div class="group-body">
+              ${gen3Gba && html`<label class="field"><span>${t('new.shinyOdds', 'Shiny odds')}</span>
+                <select value=${shinyOdds} onChange=${(e) => setShinyOdds(Number(e.target.value))}>
+                  ${[[8, '1 in 8192 (the game’s own)'], [16, '1 in 4096'], [32, '1 in 2048'], [64, '1 in 1024'], [128, '1 in 512'], [256, '1 in 256']]
+                    .map(([n, label]) => html`<option value=${n} selected=${shinyOdds === n}>${label}</option>`)}</select>
+                <span class="small muted">${t('new.shinyOddsNote', 'Patched into the game. Every player of a SoulLink run gets the same odds. The live tracker still marks only the game’s own 1 in 8192 as shiny.')}</span></label>`}
               ${Object.entries(rnd.tweaks).filter(([k]) => !inspect?.info?.miscTweaks || inspect.info.miscTweaks.includes(k)).map(([k, label]) => html`<label class="check">
                 <input type="checkbox" checked=${(values['@miscTweaks'] || []).includes(k)} onChange=${(e) => {
                   const set = new Set(values['@miscTweaks'] || []);
@@ -836,7 +844,7 @@ function JoinRun() {
     try {
       const res = await api.post('/api/runs/build', {
         progressId: pid, runId: pack.id, romId: rom.id, patchId: patch?.id || null, values: pack.randomizer.values, randomize: pack.randomizer.enabled,
-        seeds: pack.randomizer.seeds, sharedSeed: pack.randomizer.sharedSeed, players: withMyName(), buildFor: [mine], name: pack.name, mode: runMode(pack),
+        seeds: pack.randomizer.seeds, sharedSeed: pack.randomizer.sharedSeed, shinyOdds: pack.randomizer.shinyOdds, players: withMyName(), buildFor: [mine], name: pack.name, mode: runMode(pack),
         // with the pair's other title our run is built for the game we play (live tracking, cover, trophies)
         expectedOutputs: pack.expectedOutputs, rules: pack.rules, gameId: joinGameId(pack, rom, rootOf), hackId: pack.game?.hackId, hackName: pack.game?.hackName || undefined,
         // same file name as the host's ("Robin – Silberne Edition Randomized.gbc", not the raw header title; a hack –

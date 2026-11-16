@@ -979,6 +979,8 @@
   "new.toBoard": "Ouvrir le tableau SoulLink",
   "new.toBoardRun": "Ouvrir le tableau",
   "new.tweaks": "Ajustements du jeu",
+  "new.shinyOdds": "Probabilité de chromatique",
+  "new.shinyOddsNote": "Intégrée au jeu. Tous les joueurs d’un run SoulLink ont la même probabilité. Le suivi en direct ne marque comme chromatique que la probabilité normale de 1 sur 8192.",
   "new.you": "Toi",
   "nz.capsHint": "Le niveau du meilleur Pokémon du prochain boss. Strict : le dépasser est une infraction, pas un conseil.",
   "nz.centers": "Limite de Centre Pokémon",

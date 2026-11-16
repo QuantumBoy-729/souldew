@@ -2,6 +2,16 @@
 
 `npm run release` takes the release notes from the section of the version being released.
 
+## Unreleased
+
+- **Shiny odds for Gen 3 games.** Ruby, Sapphire, FireRed and Emerald: *Game tweaks* when creating a run has a new
+  “Shiny odds” setting (1 in 8192 as in the game, or 4096 / 2048 / 1024 / 512 / 256). souldew patches the game's shiny
+  check – all five places of it, so a Pokémon looks the same on every screen and a trainer's Pokémon stay non-shiny – into
+  each player's ROM before its checksum is taken, and the odds are part of the run pack, so everyone in a SoulLink gets
+  the same game. Checked on the USA versions of Emerald, FireRed (Rev 1), Ruby and Sapphire (Rev 2); a game where souldew
+  can't find the check is refused with a message. Not yet: Gen 1/2 and Gen 4+ games, and the live tracker still marks
+  only the game's own 1 in 8192 as shiny.
+
 ## 2.7.4
 
 - **“Playing now” on the souldew Discord.** The server now shows how many people are playing in souldew right now – as

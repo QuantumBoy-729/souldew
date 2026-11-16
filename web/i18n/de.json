@@ -979,6 +979,8 @@
   "new.toBoard": "SoulLink-Board öffnen",
   "new.toBoardRun": "Board öffnen",
   "new.tweaks": "Spielanpassungen",
+  "new.shinyOdds": "Shiny-Chance",
+  "new.shinyOddsNote": "Ins Spiel eingebaut. Alle Spieler eines SoulLink-Runs bekommen dieselbe Chance. Der Live-Tracker markiert weiterhin nur die normale Chance von 1 zu 8192 als Shiny.",
   "new.you": "Du",
   "nz.capsHint": "Das Level des stärksten Pokémon des nächsten Bosses. Streng: Drüber zu sein ist ein Regelbruch, kein Hinweis.",
   "nz.centers": "Pokémon-Center-Limit",

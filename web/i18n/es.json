@@ -979,6 +979,8 @@
   "new.toBoard": "Abrir tablero SoulLink",
   "new.toBoardRun": "Abrir el tablero",
   "new.tweaks": "Ajustes del juego",
+  "new.shinyOdds": "Probabilidad de shiny",
+  "new.shinyOddsNote": "Se aplica al juego. Todos los jugadores de una partida SoulLink tienen la misma probabilidad. El seguimiento en vivo solo marca como shiny la probabilidad normal de 1 entre 8192.",
   "new.you": "Tú",
   "nz.capsHint": "El nivel del as del próximo jefe. Estricto: pasarse es romper la regla, no un aviso.",
   "nz.centers": "Límite de Centro Pokémon",

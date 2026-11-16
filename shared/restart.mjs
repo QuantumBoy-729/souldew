@@ -113,6 +113,7 @@ export function restartRequest(old, { library, runs, rules, mySlot = 'p1', gameT
     mode,
     seeds,
     sharedSeed: shared,
+    shinyOdds: randomizer.shinyOdds,
     players,
     // the slots this computer built before (normally all), at least my own
     buildFor: [...new Set([...built, slots.includes(mySlot) ? mySlot : slots[0]])].sort(),
