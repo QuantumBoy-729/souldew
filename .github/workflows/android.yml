@@ -2,8 +2,8 @@ name: Android app
 
 # Builds the Android app (android/): the souldew server on nodejs-mobile in a WebView, the randomizer converted to DEX, and
 # the 3DS player (native/ctr-host + Azahar's libretro core with native/azahar-patch, built for arm64). The result is
-# souldew-<version>-android-arm64.apk; release.yml calls this workflow for a version tag and attaches the APK to the
-# release (it is not part of the desktop apps' signed latest.json: Android updates go through the APK).
+# souldew-<version>-android-arm64.apk, with the Android app's own version (android/version.properties – not the desktop
+# app's). android-release.yml calls this workflow for a tag android-v<version> and publishes the APK as a GitHub release.
 #
 # The Azahar core is the long step (20–40 min); it is cached on the patches, the host source and the build script, so
 # a run that changes only the app takes a few minutes.
@@ -39,7 +39,6 @@ on:
       - 'shared/**'
       - 'web/**'
       - 'tools/upr*/**'
-      - 'package.json'
       - '.github/workflows/android.yml'
 
 permissions:
@@ -66,7 +65,7 @@ jobs:
           cache: npm
       - name: Version
         id: version
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(grep '^versionName=' android/version.properties | cut -d= -f2 | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
       - name: Android SDK parts (NDK, CMake for the JNI bridge, platform, build tools)
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
@@ -114,7 +113,7 @@ jobs:
         run: |
           apk=android/app/build/outputs/apk/release/app-release.apk
           "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$apk" | tee badging.txt | head -1
-          grep -q "versionName='${{ steps.version.outputs.version }}'" badging.txt || { echo "::error::versionName doesn't match package.json"; exit 1; }
+          grep -q "versionName='${{ steps.version.outputs.version }}'" badging.txt || { echo "::error::versionName doesn't match android/version.properties"; exit 1; }
           unzip -l "$apk" > list.txt
           for f in lib/arm64-v8a/libnode.so lib/arm64-v8a/libctrhost.so lib/arm64-v8a/libazahar_libretro.so lib/arm64-v8a/libsouldew_node.so assets/souldew/server/index.mjs assets/souldew/tools/upr/PokeRandoZX.jar; do
             grep -q "$f" list.txt || { echo "::error::$f is not in the APK"; exit 1; }

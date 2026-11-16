@@ -62,6 +62,15 @@ export const soundsText = () => (IS_TOUCH
   ? t('set.soundsDevice', 'Sounds on this device (start-up chime, catches, deaths, badges, pings)')
   : t('set.soundsAll', 'Sounds on this computer (start-up chime, catches, deaths, badges, pings)'));
 
+/** The Android app (its WebView says Android). */
+export const IS_ANDROID = (() => {
+  try {
+    return /Android/i.test(navigator.userAgent);
+  } catch {
+    return false;
+  }
+})();
+
 /** An iPhone or iPad: the app there has no randomizer (no Java), no 3DS player (no JIT) and no way to scan the device. */
 export const IS_IOS = (() => {
   try {

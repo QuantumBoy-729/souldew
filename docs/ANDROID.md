@@ -92,7 +92,7 @@ cd android && ./gradlew assembleDebug     # app/build/outputs/apk/debug/app-debu
 ```
 
 `./gradlew assembleRelease -PsouldewAbis=arm64-v8a` builds the phone-only release APK (the default is arm64 + x86_64, for
-emulators). The version comes from `package.json` (`2.7.4` → versionName 2.7.4, versionCode 20704). On Windows set
+emulators). The version comes from `android/version.properties` (`1.0.0` → versionCode 10000). On Windows set
 `$env:JAVA_HOME` to the JDK 21 first. `scripts/android-install.ps1` does the build, installs on a connected device and
 saves its log (USB debugging on; some phones ask for a confirmation on the screen for each install).
 
@@ -101,17 +101,27 @@ If the Azahar checkout (`_ref/azahar-<tag>`) was patched by an older version of 
 
 ## GitHub Actions and releases
 
-- `.github/workflows/android.yml` builds the APK (`souldew-<version>-android-arm64.apk`) on every push that touches the app,
-  the server or the web app, and on demand. The Azahar core (20–40 min) is cached on the patches, the host source and the
+The Android app has its **own version** (`android/version.properties`, e.g. `1.0.0`; versionCode = major·10000 + minor·100 +
+patch), separate from the desktop app's `package.json` version and `v*` tags. Release notes live in `android/CHANGELOG.md`.
+
+- `.github/workflows/android.yml` builds the signed APK (`souldew-<version>-android-arm64.apk`) on every push that touches the
+  app, the server or the web app, and on demand. The Azahar core (10–40 min) is cached on the patches, the host source and the
   build script.
-- `.github/workflows/release.yml` calls it for a `v*` tag and attaches the APK to the GitHub release next to the desktop
-  files. The APK is **not** part of the signed `latest.json` (Android has no in-app updater: install the new APK over the
-  old one), and an Android failure doesn't stop the desktop release.
+- **Making a release**: bump `versionName` in `android/version.properties`, add a `## <version>` section to
+  `android/CHANGELOG.md`, commit, then
+  ```
+  git tag android-v1.0.0 && git push origin android-v1.0.0
+  ```
+  `.github/workflows/android-release.yml` checks that the tag, the version file and the changelog agree and that the signing
+  key is set, builds the APK, verifies it is **not** signed with the debug key, and creates a **draft** GitHub release with the
+  APK and the notes. Look at it, then press *Publish*. (The desktop `release.yml` no longer builds Android.)
 - **Signing**: set the repository secrets `ANDROID_KEYSTORE_B64` (`base64 -w0 souldew.jks`), `ANDROID_KEYSTORE_PASSWORD`,
   `ANDROID_KEY_ALIAS` (and `ANDROID_KEY_PASSWORD` if it differs). Create the key once
   (`keytool -genkeypair -v -keystore souldew.jks -alias souldew -keyalg RSA -keysize 4096 -validity 36500`) and keep it
   safe: an app signed with another key can't be updated. Without the secrets the APK is signed with the debug key – fine for
-  testing, not for publishing.
+  testing, refused for a release.
+- **Updating a phone**: install the new APK over the old one (same key: runs, games and settings stay). A build signed with a
+  different key (for example a debug build from a PC) has to be uninstalled first, which deletes the app's data.
 - Licences: Azahar is GPL-2.0-or-later, souldew GPL-3.0; the corresponding source of the 3DS libraries is the Azahar tag
   plus `native/azahar-patch/*.patch` in this repository.
 

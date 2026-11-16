@@ -1,12 +1,13 @@
-import groovy.json.JsonSlurper
+import java.util.Properties
 
 plugins {
     id("com.android.application")
 }
 
-// The app follows the desktop app's version (package.json): "2.7.4" → versionName 2.7.4, versionCode 20704.
-val pkgVersion: String = (JsonSlurper().parse(rootProject.file("../package.json")) as Map<*, *>)["version"] as String
-val versionParts = pkgVersion.split("-")[0].split(".").map { it.toInt() }
+// The app's own version (android/version.properties – not the desktop app's): "1.2.3" → versionCode 10203.
+val versionProps = Properties().apply { file("../version.properties").inputStream().use { load(it) } }
+val appVersionName: String = versionProps.getProperty("versionName").trim()
+val versionParts = appVersionName.split("-")[0].split(".").map { it.toInt() }
 val appVersionCode = versionParts[0] * 10000 + versionParts[1] * 100 + versionParts[2]
 
 // nodejs-mobile (Node 18) is downloaded separately (node scripts/fetch-nodejs-mobile.mjs) and unpacked to app/libnode:
@@ -29,7 +30,7 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = appVersionCode
-        versionName = pkgVersion
+        versionName = appVersionName
         ndk { abiFilters += abis }
         if (hasLibnode) {
             externalNativeBuild {

@@ -1320,7 +1320,7 @@ export function GameSession({ session, mode }) {
     side=${panelSide} collapsed=${panelPrefs.collapsed} onPrefs=${setPanelPrefs} noMoves=${features?.moves === 'no'} />`;
   const hasLeft = !!(isRun || here || (battle?.enemy && panelSide === 'left'));
   const touchPlay = IS_TOUCH && mode === 'full';
-  return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${isDs ? 'ds' : ''} ${touchPlay ? 'touch-play' : ''} ${touchPlay && menuOpen ? 'menu-open' : ''}`} data-v=${docVersion}>
+  return html`<div class=${`session ${mode} ${fs && mode === 'full' ? 'is-fs' : ''} ${isDs ? 'ds' : ''} ${touchPlay ? 'touch-play' : ''} ${touchPlay && menuOpen ? 'menu-open' : ''} ${touchPlay && statesOpen ? 'states-open' : ''}`} data-v=${docVersion}>
     ${touchPlay && html`<button class="touch-handle" aria-expanded=${menuOpen} aria-label=${t('play.menu', 'Menu')} title=${t('play.menu', 'Menu')}
       onClick=${() => setMenuOpen(!menuOpen)}><span aria-hidden="true">${menuOpen ? '×' : '☰'}</span></button>`}
     <div class="mini-head">

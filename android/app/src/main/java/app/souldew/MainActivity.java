@@ -124,6 +124,15 @@ public class MainActivity extends Activity {
             return checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
         }
 
+        /** The Android app's own version (android/version.properties), for Settings › About and bug reports. */
+        @JavascriptInterface public String appVersion() {
+            try {
+                return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
         @JavascriptInterface public void requestFilesAccess() {
             runOnUiThread(() -> {
                 if (Build.VERSION.SDK_INT < 30) {

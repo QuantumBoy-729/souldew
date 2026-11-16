@@ -40,13 +40,6 @@ jobs:
     name: The fast player part for Windows and Linux
     uses: ./.github/workflows/native.yml
 
-  # The Android app (APK). Built beside the desktop apps and attached to the release; the desktop release doesn't wait
-  # for it and isn't held back when it fails (it is not part of latest.json – see android.yml).
-  android:
-    name: The Android app
-    uses: ./.github/workflows/android.yml
-    secrets: inherit
-
   # The iOS app (an UNSIGNED IPA, see ios.yml): only when the repository variable IOS_RELEASE is "true" (needs macOS runners).
   ios:
     name: The iOS app
@@ -180,9 +173,8 @@ jobs:
 
   publish:
     name: Publish the GitHub release
-    needs: [windows, linux, macos, android, ios]
-    # runs when Windows and Linux succeeded and macOS either succeeded or was skipped (not built here); the Android APK
-    # is attached when it was built (needs.android.result is not checked)
+    needs: [windows, linux, macos, ios]
+    # runs when Windows and Linux succeeded and macOS either succeeded or was skipped (not built here)
     if: always() && needs.windows.result == 'success' && needs.linux.result == 'success' && (needs.macos.result == 'success' || needs.macos.result == 'skipped')
     runs-on: ubuntu-24.04
     permissions:
@@ -209,10 +201,7 @@ jobs:
           exe="dist/souldew-$VERSION-win-x64-setup.exe"
           appimage="dist/souldew-$VERSION-linux-x86_64.AppImage"
           deb="dist/souldew-$VERSION-linux-amd64.deb"
-          # the Android APK (when built): an extra file on the release, outside the signed desktop feed
-          apk="dist/souldew-$VERSION-android-arm64.apk"
           extra=()
-          if [ -f "$apk" ]; then extra+=("$apk"); else echo "::warning::no Android APK in this release"; fi
           # the unsigned iOS IPA (when IOS_RELEASE built it)
           ipa="dist/souldew-$VERSION-ios-unsigned.ipa"
           if [ -f "$ipa" ]; then extra+=("$ipa"); fi
