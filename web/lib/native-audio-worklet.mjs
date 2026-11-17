@@ -1,53 +1,53 @@
-// AudioWorklet of the fast player (lib/nativeplayer.mjs): a ring buffer the page fills with the host's stereo samples
-// (at the context's rate), drained through souldew's turbo mixer (turboaudio.mjs) – at 1× the game's sound as it is,
-// while fast-forwarding the music at normal speed ("music"), silence ("mute") or the sped-up original ("original"; "plain"
-// leaves the mixer out). The host sends fast-forward sound sped up by the real speed, as RetroArch does for player.html,
-// so the mixer works here exactly as there. Underruns play silence; an overfull buffer (the page fell behind) drops the
-// oldest samples so the delay stays short. If the mixer ever fails, the sound passes through as it is.
-// The 3DS page (lib/ctrplayer.mjs) asks for more (processorOptions): `prime` – after running dry, wait until that many
-// frames are buffered again (its sound arrives between pictures of up to 7 MB: one short gap, not a crackle of tiny
-// ones), `maxLag` – a bigger buffer, and `trim` – above that many buffered frames one frame per block is left out, so a
-// game that makes a little more than real time of sound (the 3DS core: 0.3 %) never piles up to the hard limit, where
-// a whole stretch would be dropped at once. Commands marked `inband` (the host's fast-forward ratio) take effect when
-// the sound that arrived after them is played, not when they arrive.
+// AudioWorklet of the fast player (lib/nativeplayer.mjs) and the 3DS player (lib/ctrplayer.mjs): the host's stereo
+// samples (at the context's rate) go through a jitter buffer (jitterring.mjs) and souldew's turbo mixer (turboaudio.mjs)
+// – at 1× the game's sound as it is, while fast-forwarding the music at normal speed ("music"), silence ("mute") or the
+// sped-up original ("original"; "plain" leaves the mixer out). The hosts send fast-forward sound sped up by the real
+// speed, as RetroArch does for player.html, so the mixer works here exactly as there. If the mixer ever fails, the sound
+// passes through as it is.
+// The 3DS page asks for a deeper buffer (processorOptions `prime`, `primeMax`, `trim`, `maxLag` – see jitterring.mjs):
+// its sound arrives between pictures of up to 7 MB. Commands marked `inband` (the 3DS host's fast-forward ratio) take
+// effect when the sound that arrived after them is played, not when they arrive. { type: 'ffsound', f } is the 3DS
+// host's own sound while it fast-forwards (interleaved stereo, the game's pace – ctrhost.c message 8): it goes straight to
+// the mixer's recording (TurboMixer.ffSound), not through the buffer – it is not played as it is, and there is k times
+// more of it than real time. { type: 'tap', frames } records what
+// comes out and sends it back with the buffer's numbers (tests, diagnostics); the numbers also go to the page once a
+// second ({ type: 'ring' }).
 import { TurboMixer } from './turboaudio.mjs';
+import { JitterRing } from './jitterring.mjs';
 
 class NativeAudio extends AudioWorkletProcessor {
   constructor(options) {
     super();
-    this.size = 65536; // frames (~2 s at 32 kHz)
-    this.l = new Float32Array(this.size);
-    this.r = new Float32Array(this.size);
-    this.read = 0;
-    this.write = 0;
-    const o = options?.processorOptions || {};
-    this.maxLag = o.maxLag > 0 ? Math.min(o.maxLag, this.size >> 1) : 4096; // ~125 ms – more is dropped
-    this.prime = o.prime > 0 ? Math.min(o.prime, this.maxLag >> 1) : 0;
-    this.trim = o.trim > 0 ? o.trim : 0;
-    this.priming = this.prime > 0;
-    this.pushed = 0; // frames ever pushed / played (positions for the in-band commands)
-    this.played = 0;
+    this.ring = new JitterRing(sampleRate, options?.processorOptions || {});
     this.inband = []; // [{ at, m }]
     this.inL = new Float32Array(128);
     this.inR = new Float32Array(128);
+    this.ffL = new Float32Array(2048); // (the host's own fast-forward sound, split into channels)
+    this.ffR = new Float32Array(2048);
     this.plain = false;
     this.broken = false;
     // what came out over the last ~0.1 s (RMS and peak of both channels) – the probe reports it (tests, diagnostics)
     this.level = { rms: 0, peak: 0 };
     this.lvl = { sum: 0, peak: 0, n: 0 };
+    this.tap = null; // { l, r, at } – a recording of what comes out ({ type: 'tap' }: tests, diagnostics)
+    this.told = 0; // frames since the buffer's numbers last went to the page (once a second: diagnostics)
     this.mixer = new TurboMixer(sampleRate, { onEvent: (e) => this.port.postMessage({ type: 'mixer', e: e.type === 'probe' ? { ...e, level: this.level } : e }) });
     for (const m of options?.processorOptions?.init || []) this.command(m);
     this.port.onmessage = (e) => {
       const d = e.data;
-      if (d instanceof Float32Array) return this.push(d);
+      if (d instanceof Float32Array) return this.ring.push(d);
       if (d === 'clear') {
-        this.read = this.write = 0;
-        this.played = this.pushed;
-        this.priming = this.prime > 0;
+        this.ring.clear();
         for (const x of this.inband.splice(0)) this.command(x.m); // (nothing left to wait for)
         return;
       }
-      if (d?.inband) this.inband.push({ at: this.pushed, m: d });
+      if (d?.type === 'ffsound') return this.ffSound(d.f);
+      if (d?.type === 'tap') {
+        const n = Math.max(0, Math.min(d.frames | 0, sampleRate * 120));
+        this.tap = n ? { l: new Float32Array(n), r: new Float32Array(n), at: 0 } : null;
+        return;
+      }
+      if (d?.inband) this.inband.push({ at: this.ring.pushed, m: d });
       else this.command(d);
     };
   }
@@ -55,8 +55,28 @@ class NativeAudio extends AudioWorkletProcessor {
   command(m) {
     if (!m || typeof m !== 'object') return;
     if (m.type === 'mode') this.plain = m.mode === 'plain';
+    if (m.type === 'paused') this.ring.paused = !!m.paused;
     try {
       this.mixer.command(m.type === 'mode' && m.mode === 'plain' ? { type: 'mode', mode: 'original' } : m);
+    } catch (err) {
+      this.fail(err);
+    }
+  }
+
+  /** The host's own fast-forward sound (interleaved) into the mixer's recording, split into its two channels. */
+  ffSound(f) {
+    if (this.plain || this.broken || !(f instanceof Float32Array)) return;
+    const n = f.length >> 1;
+    if (this.ffL.length < n) {
+      this.ffL = new Float32Array(n);
+      this.ffR = new Float32Array(n);
+    }
+    for (let i = 0; i < n; i++) {
+      this.ffL[i] = f[i * 2];
+      this.ffR[i] = f[i * 2 + 1];
+    }
+    try {
+      this.mixer.ffSound(this.ffL, this.ffR, n);
     } catch (err) {
       this.fail(err);
     }
@@ -65,22 +85,6 @@ class NativeAudio extends AudioWorkletProcessor {
   fail(err) {
     if (!this.broken) this.port.postMessage({ type: 'mixer', e: { type: 'error', message: String(err?.message || err) } });
     this.broken = true;
-  }
-
-  push(d) {
-    const n = d.length >> 1;
-    for (let i = 0; i < n; i++) {
-      this.l[this.write] = d[i * 2];
-      this.r[this.write] = d[i * 2 + 1];
-      this.write = (this.write + 1) % this.size;
-    }
-    this.pushed += n;
-    const lag = (this.write - this.read + this.size) % this.size;
-    if (lag > this.maxLag) {
-      const to = this.prime || this.maxLag >> 1;
-      this.read = (this.write - to + this.size) % this.size;
-      this.played += lag - to;
-    }
   }
 
   process(_inputs, outputs) {
@@ -92,8 +96,8 @@ class NativeAudio extends AudioWorkletProcessor {
       this.inL = new Float32Array(n);
       this.inR = new Float32Array(n);
     }
-    while (this.inband.length && this.inband[0].at <= this.played) this.command(this.inband.shift().m);
-    this.take(n);
+    while (this.inband.length && this.inband[0].at <= this.ring.played) this.command(this.inband.shift().m);
+    this.ring.take(this.inL, this.inR, n);
     let mixed = false;
     if (!this.plain && !this.broken) {
       try {
@@ -108,41 +112,29 @@ class NativeAudio extends AudioWorkletProcessor {
       if (R !== L) R.set(this.inR.subarray(0, n));
     }
     this.measure(L, R, n);
+    if (this.tap) this.record(L, R, n);
+    if ((this.told += n) >= sampleRate) {
+      this.told = 0;
+      this.port.postMessage({ type: 'ring', ring: this.ringStats() });
+    }
     return true;
   }
 
-  /** The next n frames of the ring into inL / inR (silence where it ran dry, or while priming). */
-  take(n) {
-    const lag = (this.write - this.read + this.size) % this.size;
-    if (this.priming && lag >= this.prime) this.priming = false;
-    if (!this.priming && this.trim && lag > this.trim + n + 2) {
-      // one frame more than the block, resampled into it (0.8 % faster for a moment – inaudible, and no click)
-      const step = (n + 1) / n;
-      for (let i = 0; i < n; i++) {
-        const p = i * step;
-        const k = Math.floor(p);
-        const f = p - k;
-        const a = (this.read + k) % this.size;
-        const b = (a + 1) % this.size;
-        this.inL[i] = this.l[a] + (this.l[b] - this.l[a]) * f;
-        this.inR[i] = this.r[a] + (this.r[b] - this.r[a]) * f;
-      }
-      this.read = (this.read + n + 1) % this.size;
-      this.played += n + 1;
-      return;
-    }
-    for (let i = 0; i < n; i++) {
-      if (this.priming || this.read === this.write) {
-        if (!this.priming && this.prime) this.priming = true; // ran dry: wait until `prime` frames are there again
-        this.inL[i] = 0;
-        this.inR[i] = 0;
-        continue;
-      }
-      this.inL[i] = this.l[this.read];
-      this.inR[i] = this.r[this.read];
-      this.read = (this.read + 1) % this.size;
-      this.played++;
-    }
+  /** The buffer's numbers so far (jitterring.mjs stats) and its state now. */
+  ringStats() {
+    return { ...this.ring.stats, prime: this.ring.prime, lag: this.ring.lag, ratio: this.ring.ratio };
+  }
+
+  /** The tap: what came out, until it is full – then it goes to the page with the ring's numbers. */
+  record(L, R, n) {
+    const t = this.tap;
+    const k = Math.min(n, t.l.length - t.at);
+    t.l.set(L.subarray(0, k), t.at);
+    t.r.set(R.subarray(0, k), t.at);
+    t.at += k;
+    if (t.at < t.l.length) return;
+    this.tap = null;
+    this.port.postMessage({ type: 'tap', l: t.l, r: t.r, sampleRate, ring: this.ringStats() }, [t.l.buffer, t.r.buffer]);
   }
 
   measure(L, R, n) {

@@ -20,14 +20,15 @@ const load = () => {
 };
 
 // The running ROM's own data (server/lib/romloc.mjs, computed by the server from the file): its map → location step
-// and place names (shared/live/romloc.mjs), and for GBA games its species table (shared/live/romspecies.mjs).
+// and place names (shared/live/romloc.mjs), for Game Boy games its map headers (`gbMaps`, which the place is read by),
+// and for GBA games its species table (shared/live/romspecies.mjs).
 // `pending` while it loads; `data` null = the ROM has no location data (the tables still serve).
-const ROMLOC = { src: null, data: null, species: null, wram: null, own: null, pending: false };
+const ROMLOC = { src: null, data: null, species: null, wram: null, gbMaps: null, own: null, pending: false };
 
 /** Starts loading the location data of the ROM at `src` (the /api/… URL the emulator loads); resolves when done. */
 export function loadRomLocations(src) {
   if (!src || ROMLOC.src === src) return ROMLOC.p || Promise.resolve();
-  Object.assign(ROMLOC, { src, data: null, species: null, wram: null, own: null, pending: true });
+  Object.assign(ROMLOC, { src, data: null, species: null, wram: null, gbMaps: null, own: null, pending: true });
   setRomPlaces(null); // (another game's names don't apply any more)
   setRomSpecies(null);
   setRomTypes(null);
@@ -37,7 +38,7 @@ export function loadRomLocations(src) {
     .then((j) => {
       if (ROMLOC.src !== src) return;
       Object.assign(ROMLOC, {
-        data: j?.data || null, species: j?.species || null, wram: j?.wram || null, pending: false,
+        data: j?.data || null, species: j?.species || null, wram: j?.wram || null, gbMaps: j?.gbMaps || null, pending: false,
         own: { items: j?.items || null, moves: j?.moves || null, types: j?.types || null, caps: j?.caps || null, capsWhy: j?.capsWhy || null, header: j?.header || null, vanilla: j ? j.vanilla !== false : null },
       });
       setRomPlaces(ROMLOC.data); // catches made now are named like the sign names their place
@@ -53,7 +54,7 @@ export function loadRomLocations(src) {
  * board, another game) – the next session loads its own again.
  */
 export function resetRomData() {
-  Object.assign(ROMLOC, { src: null, data: null, species: null, wram: null, own: null, pending: false, p: null });
+  Object.assign(ROMLOC, { src: null, data: null, species: null, wram: null, gbMaps: null, own: null, pending: false, p: null });
   setRomTypes(null);
   setRomSpecies(null);
 }
@@ -87,7 +88,7 @@ export function readHere(entry, read, state = null) {
     return null;
   }
   const rom = ROMLOC.data;
-  const r = readLocation(MAPS, entry, read, { rom, state });
+  const r = readLocation(MAPS, entry, read, { rom, state, gbMaps: ROMLOC.gbMaps });
   if (!r) return null;
   const lang = currentLang();
   const table = locationLabel(r.gen, r.id, { maps: MAPS, ...LOC, gen4: gen4data() }, lang === 'de' ? 'de' : 'en');
@@ -96,12 +97,12 @@ export function readHere(entry, read, state = null) {
 }
 
 /** What the music is right now (readMusicInfo, for a MusicKeyTracker), or null – cheap, read every few frames. */
-export function musicInfo(entry, read) {
+export function musicInfo(entry, read, ctx = {}) {
   if (!MAPS) {
     load();
     return null;
   }
-  return readMusicInfo(MAPS, entry, read);
+  return readMusicInfo(MAPS, entry, read, ctx);
 }
 
 /**
@@ -124,7 +125,7 @@ export function areaOfHere(doc, manifest, gen, here) {
 }
 
 function chipFor(st, enc) {
-  if (st === 'dead' && enc?.species) return { cls: 'dead', text: t('loc.dead', 'Dead: {species}', { species: enc.nickname || speciesName(enc.species) }) };
+  if (st === 'dead' && enc?.outcome === 'caught' && enc.species) return { cls: 'dead', text: t('loc.dead', 'Dead: {species}', { species: enc.nickname || speciesName(enc.species) }) };
   if (st === 'dead') return { cls: 'used', text: t('loc.used', 'Area used up') };
   if (enc?.outcome === 'caught') return { cls: 'caught', text: t('loc.caught', 'Caught: {species}', { species: enc.nickname || speciesName(enc.species) }) };
   // a missed encounter uses the area up for the whole group

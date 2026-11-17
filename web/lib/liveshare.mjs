@@ -208,13 +208,14 @@ function lastDeath(doc, manifest, status) {
 /** The cause panel and the post's sentence for one death. */
 function deathCause(doc, manifest, area, pair, label) {
   const slots = slotsOf(manifest);
-  const by = pair.by && slots.includes(pair.by) ? pair.by : slots.find((s) => encounter(doc, area, s)?.species) || slots[0];
+  const caught = (s) => (encounter(doc, area, s)?.outcome === 'caught' ? encounter(doc, area, s) : null);
+  const by = pair.by && slots.includes(pair.by) ? pair.by : slots.find((s) => caught(s)?.species) || slots[0];
   const enc = encounter(doc, area, by);
   const k = pair.killer?.species ? pair.killer : null;
   const place = placeOf(doc, pair);
   const typed = typeof pair.cause === 'string' ? pair.cause.trim() : '';
   const n = slots.length;
-  const others = slots.filter((s) => s !== by).map((s) => [s, encounter(doc, area, s)]).filter(([, e]) => e?.species);
+  const others = slots.filter((s) => s !== by).map((s) => [s, caught(s)]).filter(([, e]) => e?.species);
   const names = getPlayers(doc, manifest);
   const went = others.length ? t('live.dWent', '{list} went with it', {
     list: joinNames(others.map(([s, e]) => t('live.whose', '{name}’s {mon}', { name: names[s]?.name || s.toUpperCase(), mon: monLabel(e.nickname, e.species) }))),
@@ -262,6 +263,9 @@ function ruleChips(doc, manifest) {
   if (r.dupes && r.dupes !== 'off') out.push(t('hof.rDupes', 'Dupes clause'));
   if (r.typeClause && r.typeClause !== 'off') out.push(t('hof.rType', 'Type rule'));
   if (manifest.randomizer?.enabled) out.push(t('hof.rRandomized', 'Randomized'));
+  // a Shinylocke: the game's own shiny rate changed (shared/shiny.mjs)
+  if (manifest.shiny?.rate && manifest.shiny.rate !== 8192) out.push(t('hof.rShiny', 'Shiny 1 in {n}', { n: manifest.shiny.rate }));
+  if (manifest.shiny?.trainers) out.push(t('hof.rShinyTrainers', 'Trainer shinies'));
   if (solo && presetOf(r) !== 'hardcore') {
     if (r.setMode) out.push(t('hof.rSetMode', 'Set mode'));
     if (r.noBattleItems) out.push(t('hof.rNoItems', 'No items in battle'));
@@ -367,8 +371,9 @@ export function cardModel({ doc, manifest, gen = 4, event, app = '' }) {
     const st = event.status || {};
     const who = names[st.by]?.name || playerNames[0];
     if (solo || st.auto) highlights = [{ text: who, color: PLAYER_COLORS[st.by] || PLAYER_COLORS.p1 }];
-    headline = solo ? (st.reason === 'deathless' ? t('live.hDeathless', '{name}’s deathless run is over', { name: who }) : t('live.hWipeSolo', '{name}’s Nuzlocke is over', { name: who }))
-      : st.auto ? t('live.hWipe', '{name}’s team was wiped', { name: who }) : t('live.hEnded', 'The SoulLink is over');
+    headline = st.auto && st.reason === 'lives' ? (solo ? t('live.hLivesSolo', '{name}’s Nuzlocke is out of lives', { name: who }) : t('live.hLives', 'Out of lives – the SoulLink is over'))
+      : solo ? (st.reason === 'deathless' ? t('live.hDeathless', '{name}’s deathless run is over', { name: who }) : t('live.hWipeSolo', '{name}’s Nuzlocke is over', { name: who }))
+        : st.auto ? t('live.hWipe', '{name}’s team was wiped', { name: who }) : t('live.hEnded', 'The SoulLink is over');
     const last = lastDeath(doc, manifest, st);
     if (last) {
       const d = deathCause(doc, manifest, last.area, last.pair, { killer: t('live.lastFellTo', 'The last one fell to'), none: t('live.lastToFall', 'The last to fall') });

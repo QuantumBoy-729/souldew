@@ -198,7 +198,7 @@ layout();
 // mixer keeps the music going at normal speed (Settings › sound while fast-forwarding), for DS games synthesized from the
 // ROM's own sound archive (lib/sdat-worker.mjs), as in player.html.
 const MAX_SOUND_RATIO = 16; // the host speeds its fast-forward sound up at most this much
-const audio = { ctx: null, node: null, gain: null, key: null, events: [], probes: [] };
+const audio = { ctx: null, node: null, gain: null, key: null, events: [], subs: new Set(), probes: [] };
 function tellAudio(m) {
   audio.node?.port.postMessage(m);
 }
@@ -222,6 +222,17 @@ async function startAudio(rate) {
       if (ev.type === 'state' || ev.type === 'error') {
         audio.events.push({ t: Math.round(performance.now()), ...ev });
         if (audio.events.length > 40) audio.events.shift();
+      }
+      // every mixer decision (loops found, switches, song keys) to the page's music log for "Save diagnostics" – as player.html;
+      // without it a native player's diagnostics showed only the speed steps (a Windows player's Pokémon Y report, 2.7.4)
+      if (ev.type !== 'probe') {
+        for (const f of audio.subs) {
+          try {
+            f({ t: Math.round(performance.now()), ...ev });
+          } catch {
+            // the page's problem
+          }
+        }
       }
     };
     audio.gain = audio.ctx.createGain();
@@ -434,11 +445,13 @@ function sendInput() {
 }
 
 let keyMap = {}; // keyCode → button
+let hotkeys = controls.resolveHotkeys(null); // the fast-forward keys (Tab, Shift+Tab) – handled by the play view
 function forwardKey(e, down) {
-  post({ type: 'emu-key', key: e.key, code: e.code, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, down, repeat: e.repeat });
+  post({ type: 'emu-key', key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, down, repeat: e.repeat, blur: e.blur || undefined });
 }
 addEventListener('keydown', (e) => {
   forwardKey(e, true);
+  if (controls.isHotkeyKey(e, hotkeys)) e.preventDefault(); // Tab fast-forwards here, it doesn't move the focus
   const b = keyMap[e.keyCode];
   if (b === undefined) return;
   e.preventDefault();
@@ -453,7 +466,7 @@ addEventListener('keyup', (e) => {
   sendInput();
 });
 addEventListener('blur', () => {
-  forwardKey({ key: 'Tab', code: 'Tab' }, false);
+  forwardKey({ key: 'Tab', code: 'Tab', blur: true }, false); // ends a held fast-forward
   inp.keys = 0;
   inp.pad = 0;
   inp.touch = false;
@@ -493,16 +506,39 @@ if (SYSTEM === 'nds') {
   canvas.addEventListener('pointercancel', lift);
 }
 
+// Settings › Controls and › Controller (config.controls, config.pads): read when the page starts, and again whenever
+// they change while the game runs (__emu.setControls from the play view) – the game often keeps running in the corner
+// while the player re-binds buttons in Settings, and the in-game reset doesn't load the page again (ticket #18).
+let padCfg = null; // config.pads
+let padButtons = controls.padMap(null); // game button → controller button label
+const padRec = controls.padRecorder(); // (diagnostics: __emu.padInfo)
+let padActions = controls.padActions(null); // controller hotkeys: standard button index → action
+let controlsSig = '';
+function applyControls(config) {
+  const sig = JSON.stringify([config?.controls || null, config?.pads || null]);
+  if (sig === controlsSig) return; // (the play view hands them over once the game runs – mostly what was read at start)
+  controlsSig = sig;
+  keyMap = controls.keyButtons(config?.controls);
+  hotkeys = controls.resolveHotkeys(config?.controls);
+  padCfg = config?.pads || null;
+  padButtons = controls.padMap(padCfg);
+  padActions = controls.padActions(padCfg);
+  post({ type: 'emu-pad', action: 'ffHold', down: false }); // (a fast-forward button held under the old buttons)
+  // what was held under the old buttons is let go (the next poll presses what is still down)
+  inp.keys = 0;
+  inp.pad = 0;
+  if (st.id) sendInput();
+}
+
 // controllers: the chosen device (lib/controls.mjs pickPad) – buttons by Settings › Controller, the left stick moves
 // like the D-pad; RT/R2 toggles turbo, LT/L2 and Home pause (as in player.html)
-function startPads(pads) {
-  const pm = controls.padMap(pads);
+function startPads() {
   const IDX = Object.fromEntries(controls.PAD_LABELS.map((l, i) => [l, i]));
-  const HOT = { 7: 'turbo', 6: 'pause', 16: 'pause' };
   const held = {};
   setInterval(() => {
     if (!st.ready || document.visibilityState === 'hidden') return;
-    const pad = controls.pickPad(navigator.getGamepads?.() || [], pads?.device || null);
+    const pad = controls.pickPad(navigator.getGamepads?.() || [], padCfg?.device || null);
+    padRec.see(pad, padButtons, controls.appHasPad());
     if (!pad) {
       if (inp.pad) {
         inp.pad = 0;
@@ -511,7 +547,7 @@ function startPads(pads) {
       return;
     }
     let bits = 0;
-    for (const [btn, label] of Object.entries(pm)) {
+    for (const [btn, label] of Object.entries(padButtons)) {
       const i = IDX[label];
       if (i !== undefined && pad.buttons[i]?.pressed && btn in BIT) bits |= 1 << BIT[btn];
     }
@@ -521,11 +557,7 @@ function startPads(pads) {
     if (ly < -0.5) bits |= 1 << BIT.up;
     if (ly > 0.5) bits |= 1 << BIT.down;
     inp.pad = controls.appHasPad() ? 0 : bits; // the app's menus have the controller (lib/padnav.mjs)
-    for (const [i, action] of Object.entries(HOT)) {
-      const on = !!pad.buttons[i]?.pressed;
-      if (on && !held[i]) post({ type: 'emu-pad', action });
-      held[i] = on;
-    }
+    for (const m of controls.padHotkeyPresses(pad, padActions, held, controls.appHasPad())) post(m);
     sendInput();
   }, 16);
 }
@@ -546,6 +578,8 @@ const blankSave = (b) => !b || !b.length || b.every((x) => x === 0xff) || b.ever
 
 window.__emu = {
   ready: false,
+  /** Diagnostics: the controller settings this page plays with, the device it picked and the last presses. */
+  padInfo: () => padRec.info(padCfg, padButtons),
   native: true,
   system: () => SYSTEM,
   locateRam() {
@@ -582,6 +616,10 @@ window.__emu = {
   },
   speed: () => st.speed,
   setFullTurbo() {}, // the native host always runs fast-forward at full power – it doesn't hold the page back
+  /** Settings › Controls / Controller changed while the game runs: { controls, pads } as in config. */
+  setControls(config) {
+    applyControls(config);
+  },
   /** Emulated frames so far (the host's count, four times a second) – the page measures the real speed with it. */
   frames: () => st.hostFrame,
   fastForward: () => st.speed > 1,
@@ -641,6 +679,11 @@ window.__emu = {
     sdatSong(key);
   },
   /** The mixer's last state changes (diagnostics). */
+  /** Every mixer event from now on (the page keeps them for "Save diagnostics"); returns the unsubscribe. */
+  onAudio(f) {
+    audio.subs.add(f);
+    return () => audio.subs.delete(f);
+  },
   turboAudio: () => ({ mode: st.turboAudio, key: audio.key, sdat: sdat.ready, events: audio.events.slice(-10) }),
   /** Tests: what the mixer plays right now ({ playing, turbo, key, … }), or null without sound. */
   audioProbe() {
@@ -713,9 +756,8 @@ async function start() {
   await setLang(status?.config?.lang || guessLang()).catch(() => {});
   try {
     await controls.detectLayout(status?.config?.lang);
-    const m = controls.resolve(status?.config?.controls);
-    keyMap = Object.fromEntries(Object.entries(m).filter(([, v]) => v).map(([b, v]) => [v.keyCode, b]));
-    startPads(status?.config?.pads || null);
+    applyControls(status?.config);
+    startPads();
   } catch (e) {
     st.log.push(`controls: ${e.message}`);
   }

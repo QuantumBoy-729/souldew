@@ -65,6 +65,10 @@
     "maxHpAddr": "0xCFF4",
     "levelAddr": "0xCFF3",
     "dvsAddr": "0xCFF1",
+    "statusAddr": "0xCFE9",
+    "catchRateAddr": "0xD007",
+    "battleTypeAddr": "0xD05A",
+    "catchSource": "pokered.sym wEnemyMonStatus / wEnemyMonActualCatchRate / wBattleType (pret symbols branch); the ball formula reads these (pokered engine/items/item_effects.asm ItemUseBall)",
     "source": "pokered.sym:18733 (wEnemyMon struct, pret symbols branch)"
    },
    "badges": {
@@ -135,6 +139,10 @@
     "maxHpAddr": "0xCFF4",
     "levelAddr": "0xCFF3",
     "dvsAddr": "0xCFF1",
+    "statusAddr": "0xCFE9",
+    "catchRateAddr": "0xD007",
+    "battleTypeAddr": "0xD05A",
+    "catchSource": "pokeblue.sym wEnemyMonStatus / wEnemyMonActualCatchRate / wBattleType (pret symbols branch); the ball formula reads these (pokered engine/items/item_effects.asm ItemUseBall)",
     "source": "pokeblue.sym:18733 (wEnemyMon struct, pret symbols branch)"
    },
    "badges": {
@@ -205,6 +213,10 @@
     "maxHpAddr": "0xCFF3",
     "levelAddr": "0xCFF2",
     "dvsAddr": "0xCFF0",
+    "statusAddr": "0xCFE8",
+    "catchRateAddr": "0xD006",
+    "battleTypeAddr": "0xD059",
+    "catchSource": "pokeyellow.sym wEnemyMonStatus / wEnemyMonActualCatchRate / wBattleType (pret symbols branch); the ball formula reads these (pokered engine/items/item_effects.asm ItemUseBall)",
     "source": "pokeyellow.sym:21956 (wEnemyMon struct, pret symbols branch)"
    },
    "badges": {
@@ -275,6 +287,10 @@
     "maxHpAddr": "0xD101",
     "levelAddr": "0xD0FC",
     "dvsAddr": "0xD0F5",
+    "statusAddr": "0xD0FD",
+    "catchRateAddr": "0xD114",
+    "battleTypeAddr": "0xD119",
+    "catchSource": "pokegold.sym wEnemyMonStatus / wEnemyMonCatchRate / wBattleType (pret symbols branch); the ball formula reads these (pokecrystal engine/items/item_effects.asm PokeBallEffect)",
     "source": "pokegold.sym:41504 (wEnemyMon struct, pret symbols branch)"
    },
    "badges": {
@@ -345,6 +361,10 @@
     "maxHpAddr": "0xD101",
     "levelAddr": "0xD0FC",
     "dvsAddr": "0xD0F5",
+    "statusAddr": "0xD0FD",
+    "catchRateAddr": "0xD114",
+    "battleTypeAddr": "0xD119",
+    "catchSource": "pokesilver.sym wEnemyMonStatus / wEnemyMonCatchRate / wBattleType (pret symbols branch); the ball formula reads these (pokecrystal engine/items/item_effects.asm PokeBallEffect)",
     "source": "pokesilver.sym:41503 (wEnemyMon struct, pret symbols branch)"
    },
    "badges": {
@@ -428,6 +448,10 @@
     "maxHpAddr": "0xD218",
     "levelAddr": "0xD213",
     "dvsAddr": "0xD20C",
+    "statusAddr": "0xD214",
+    "catchRateAddr": "0xD22B",
+    "battleTypeAddr": "0xD230",
+    "catchSource": "pokecrystal.sym wEnemyMonStatus / wEnemyMonCatchRate / wBattleType (pret symbols branch); the ball formula reads these (pokecrystal engine/items/item_effects.asm PokeBallEffect)",
     "source": "pokecrystal.sym:56002 (wEnemyMon struct, pret symbols branch)"
    },
    "badges": {
@@ -1049,9 +1073,9 @@
    "verified": "xMAP + ROM bytes (pointer); PKHeX (offsets); runtime not tested",
    "badges": {
     "generalOffsetFromSaveBase": "0x10",
-    "johtoOffset": "0x7E",
+    "trainerOffset": "0x64",
     "kantoOffset": "0x83",
-    "source": "save general block in RAM (saveBase+0x10, same layout as the .sav: shared/gen4save.mjs)"
+    "source": "save general block in RAM (saveBase+0x10, same layout as the .sav: shared/gen4save.mjs); PKHeX SAV4HGSS Trainer1 0x64: TID +0x10, SID +0x12, Johto badges +0x1A (0x7E), Kanto badges +0x1F (0x83), a bit per badge"
    },
    "battleActive": {
     "pidOffsetFromSaveBase": "0x49E7C",
@@ -1133,9 +1157,9 @@
    "verified": "xMAP (pointer); PKHeX (offsets); runtime not tested",
    "badges": {
     "generalOffsetFromSaveBase": "0x10",
-    "johtoOffset": "0x7E",
+    "trainerOffset": "0x64",
     "kantoOffset": "0x83",
-    "source": "save general block in RAM (saveBase+0x10, same layout as the .sav: shared/gen4save.mjs)"
+    "source": "save general block in RAM (saveBase+0x10, same layout as the .sav: shared/gen4save.mjs); PKHeX SAV4HGSS Trainer1 0x64: TID +0x10, SID +0x12, Johto badges +0x1A (0x7E), Kanto badges +0x1F (0x83), a bit per badge"
    },
    "battleActive": {
     "pidOffsetFromSaveBase": "0x49E7C",

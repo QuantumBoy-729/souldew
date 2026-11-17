@@ -4,6 +4,7 @@
 import { html, useState } from '/vendor/htm-preact.mjs';
 import { t } from '../lib/i18n.mjs';
 import { RULE_PRESETS, presetOf } from '../lib/run.mjs';
+import { LIVES_DEFAULT, LIVES_MIN, LIVES_MAX, clampLives } from '/shared/lives.mjs';
 
 const presets = () => [
   ['classic', t('nzr.classic', 'Classic'), t('nzr.classicText', 'The two core rules – only the first Pokémon of each area, fainted means dead – plus the dupes clause (an evolution line you already caught doesn’t count, keep looking) and the shiny clause (a shiny is a free catch). A blackout ends the run.')],
@@ -13,9 +14,13 @@ const presets = () => [
 
 const areaOptions = () => [['area', t('nzr.optArea', 'Count as the area')], ['free', t('nzr.optFree', 'Free extra')], ['banned', t('nzr.optBanned', 'Not allowed')]];
 
+// the dupes clause's switch – one text for the SoulLink rules (MissedDupesRule) and the solo ones (ruleDefs)
+const missedDupesLabel = () => t('rules.missedDupes', 'Fled or knocked-out encounters count as dupes');
+const missedDupesHint = () => t('rules.missedDupesHint', 'Like a catch, once it’s known which Pokémon it was – souldew notes it when it sees the battle.');
+
 /**
  * Every rule once: `check` = on/off, `choice` = one of `options`. `section` groups them on the board; `honour`
- * marks rules the app can't see (it only reminds you).
+ * marks rules the app can't see (it only reminds you); `when`: shown only while it applies (the other rules).
  */
 const ruleDefs = () => [
   { key: 'autoDeath', kind: 'check', section: 'core', label: t('nzr.autoDeath', 'Fainted means dead'), hint: t('nzr.autoDeathHint', 'Marked dead by the app as soon as its HP hits 0.') },
@@ -25,6 +30,7 @@ const ruleDefs = () => [
   { key: 'deathless', kind: 'check', section: 'core', label: t('nzr.deathless', 'Deathless'), hint: t('nzr.deathlessHint', 'The first death ends the run.') },
   { key: 'dupes', kind: 'choice', section: 'clauses', label: t('rules.dupes', 'Dupes clause'), hint: t('nz.dupesHint', 'Already caught it? Keep looking – dead ones count too.'),
     options: [['off', t('rules.off', 'Off')], ['species', t('nzr.dupesSpecies', 'Same species')], ['line', t('nzr.dupesLine', 'Whole evolution line')]] },
+  { key: 'missedDupes', kind: 'check', section: 'clauses', when: (v) => v.dupes !== 'off', label: missedDupesLabel(), hint: missedDupesHint() },
   { key: 'shinyClause', kind: 'check', section: 'clauses', label: t('nzr.shiny', 'Shiny clause'), hint: t('nz.shinyHint', 'A shiny may always be caught, even on a used area – a bonus.') },
   { key: 'gifts', kind: 'choice', section: 'clauses', label: t('nzr.gifts', 'Gifts & eggs'), hint: t('nz.giftsHint', 'Starter aside: eggs, trades, fossils and gift Pokémon.'), options: areaOptions() },
   { key: 'statics', kind: 'choice', section: 'clauses', label: t('nzr.statics', 'Static encounters'), hint: t('nz.staticsHint', 'Legendaries and fixed encounters like Sudowoodo or Snorlax.'), options: areaOptions() },
@@ -51,6 +57,14 @@ export function Choice({ value, options, onChange, label }) {
 function RuleCheck({ checked, onChange, label, hint, honour, disabled }) {
   return html`<label class="check"><input type="checkbox" checked=${!!checked} disabled=${disabled} onChange=${(e) => onChange(e.target.checked)} />
     <span>${label}${honour && html` <${Honour} />`}${hint && html`<span class="hint">${hint}</span>`}</span></label>`;
+}
+
+/**
+ * "Fled or knocked-out encounters count as dupes" (SoulLink rules on the board; the solo editor has it in ruleDefs): a
+ * missed encounter whose Pokémon is known uses up its evolution line like a catch (lib/run.mjs dupeOf).
+ */
+export function MissedDupesRule({ value, onChange }) {
+  return html`<${RuleCheck} checked=${value} onChange=${onChange} label=${missedDupesLabel()} hint=${missedDupesHint()} />`;
 }
 
 /** One rule with its title, hint and control (board layout). */
@@ -89,7 +103,7 @@ export function NuzlockeRules({ value, onChange, variant = 'board' }) {
   // editing a toggle on the board: no longer a preset (presetOf tells whether it still happens to match one);
   // in the wizard you are in "Custom" already
   const edit = (patch) => onChange({ ...patch, preset: wizard ? 'custom' : null });
-  const defs = ruleDefs();
+  const defs = ruleDefs().filter((d) => !d.when || d.when(value));
   const control = (d) => (d.kind === 'check'
     ? html`<${RuleCheck} checked=${value[d.key]} onChange=${(v) => edit({ [d.key]: v })} label=${d.label} hint=${d.hint} honour=${d.honour} />`
     : html`<${Choice} label=${d.label} value=${shown(d.key, value[d.key])} onChange=${(v) => edit({ [d.key]: v })} options=${d.options} />`);
@@ -153,4 +167,58 @@ export function TypeHelpRule({ value, onChange, locked, hostName, solo }) {
   return html`<label class=${`check ${locked ? 'locked' : ''}`}><input type="checkbox" checked=${value !== false} disabled=${locked} onChange=${(e) => onChange(e.target.checked)} />
     <span>${t('rules.typeHelp', 'Show type matchup help')}<span class="hint">${hint}</span>
       ${locked && html`<span class="hint host-only">${hostName ? t('rules.hostOnlyName', 'Only {name} can change this (host).', { name: hostName }) : t('rules.hostOnly', 'Only the host can change this.')}</span>`}</span></label>`;
+}
+
+/** What the lives rule does, for 1 (solo), 2 or 3–4 players and the chosen pool – one text for the wizard and the board. */
+function livesHint(players, pool) {
+  if (players < 2) return t('lives.hintSolo', 'Every death costs a life – also one you mark by hand, and a bonus Pokémon. The death that takes the last life ends the run; undoing a death gives its life back.');
+  const what = players > 2
+    ? t('lives.hintGroup', 'Every death costs one life – only the Pokémon that fell, not the ones of its group that go with it.')
+    : t('lives.hintPair', 'Every death costs one life – only the Pokémon that fell, not its partner that goes with it.');
+  const how = pool === 'player'
+    ? t('lives.hintPlayer', 'Per player: the life comes off the player whose Pokémon fell – once anyone has none left, the run is over, like a wiped team.')
+    : players > 2 ? t('lives.hintSharedGroup', 'Shared: one pool for all of you – the death that takes the last life ends the run.')
+      : t('lives.hintShared', 'Shared: one pool for both of you – the death that takes the last life ends the run.');
+  return `${what} ${how} ${t('lives.hintUndo', 'Undoing a death gives its life back.')}`;
+}
+
+/** Off / on, how many (LIVES_MIN–LIVES_MAX), and with 2–4 players whose lives they are. onChange(patch of the rules). */
+function LivesControl({ value, pool, players, onChange }) {
+  const n = value > 0 ? value : 0;
+  return html`<div class="row" style="gap:8px">
+    <${Choice} label=${t('lives.title', 'Lives')} value=${n > 0 ? 'on' : 'off'} onChange=${(v) => onChange({ lives: v === 'on' ? n || LIVES_DEFAULT : 0 })}
+      options=${[['off', t('rules.off', 'Off')], ['on', t('common.on', 'On')]]} />
+    ${n > 0 && html`<input type="number" class="num-in" min=${LIVES_MIN} max=${LIVES_MAX} value=${n} aria-label=${t('lives.count', 'Number of lives')}
+      onChange=${(e) => onChange({ lives: clampLives(e.target.value) })} />`}
+    ${n > 0 && players > 1 && html`<${Choice} label=${t('lives.pool', 'Whose lives')} value=${pool === 'player' ? 'player' : 'shared'} onChange=${(v) => onChange({ livesPool: v })}
+      options=${[['shared', t('lives.shared', 'Shared')], ['player', t('rules.perPlayer', 'Per player')]]} />`}
+  </div>`;
+}
+
+/**
+ * The lives rule (shared/lives.mjs) – for every run, off unless switched on: a number of lives, every death costs
+ * one, the death that takes the last ends the run; with 2–4 players one pool for everyone or each player's own.
+ * value / pool: the rules' `lives` / `livesPool`; onChange(patch). `players`: how many play. Variant 'wizard': compact,
+ * with its title; 'board': the hint over the control (the panel carries the title) and `left` – how many are left
+ * (run.mjs lives()) with the players' `names`, and `ended` (the run has an end): while it hasn't, a pool the deaths so
+ * far already use up says that the run goes on until the next death – changing the rule never ends a run by itself
+ * (run.mjs settleLives).
+ */
+export function LivesRule({ value, pool, players = 1, onChange, variant = 'board', left = null, names = {}, ended = false }) {
+  const control = html`<${LivesControl} value=${value} pool=${pool} players=${players} onChange=${onChange} />`;
+  const hint = livesHint(players, pool);
+  if (variant === 'wizard') {
+    return html`<div class="stack-s"><b class="small">${t('lives.title', 'Lives')}</b>${control}${value > 0 && html`<span class="tiny faint">${hint}</span>`}</div>`;
+  }
+  const pools = left ? Object.entries(left.pools) : [];
+  return html`<div class="stack-s">
+    <p class="small muted">${value > 0 ? hint : t('lives.hintOff', 'An extra rule: a number of lives for the run – every death costs one, and the run is over once they are gone.')}</p>
+    ${control}
+    ${pools.length > 0 && html`<p class="small lives-left">${pools.map(([id, p], i) => html`${i ? ' · ' : ''}<span class=${`fact ${p.low || p.out ? 'low' : ''}`}>${id === 'all'
+      ? t('lives.leftOf', '{left} of {total} left', { left: p.left, total: left.total })
+      : t('lives.leftOfNamed', '{name}: {left} of {total} left', { name: names[id] || id.toUpperCase(), left: p.left, total: left.total })}</span>`)}</p>`}
+    ${!ended && pools.filter(([, p]) => p.out).map(([id]) => html`<p class="warning">${id === 'all'
+      ? t('lives.usedUp', 'The deaths so far already use up these lives. The run goes on – the next death ends it.')
+      : t('lives.usedUpNamed', '{name}: the deaths so far already use up these lives. The run goes on – the next Pokémon {name} loses ends it.', { name: names[id] || id.toUpperCase() })}</p>`)}
+  </div>`;
 }

@@ -142,6 +142,11 @@ export function resolve(saved, lay = current) {
   return out;
 }
 
+/** Stored mapping → { keyCode: button } – how the native players (lib/nativeplayer.mjs, lib/ctrplayer.mjs) read keys. */
+export function keyButtons(saved, lay = current) {
+  return Object.fromEntries(Object.entries(resolve(saved, lay)).filter(([, v]) => v).map(([b, v]) => [v.keyCode, b]));
+}
+
 /** EmulatorJS controls table (EJS_defaultControls): the 12 game buttons on keyboard and controller. */
 export function ejsControls(saved, lay = current, pads = null) {
   const m = resolve(saved, lay);
@@ -149,6 +154,60 @@ export function ejsControls(saved, lay = current, pads = null) {
   const p1 = {};
   for (const b of BUTTONS) p1[b.ejs] = { value: m[b.id]?.keyCode ?? -1, value2: pm[b.id] || '' };
   return { 0: p1, 1: {}, 2: {}, 3: {} };
+}
+
+// ---- fast-forward hotkeys ---------------------------------------------------------------------------------------
+// As in mGBA: hold Tab = fast-forward while it is held, Shift+Tab = fast-forward on / off – both at the turbo speed
+// picked last in the play view (web/views/play.mjs handles them, the player pages only forward the keys). They can be
+// re-bound like the game buttons and are stored next to them: config.controls.ffHold / .ffToggle = { keyCode, key,
+// code, shift? }; on a controller config.pads.map.ffHold / .ffToggle = a button label (none unless the player picks one).
+export const HOTKEYS = [
+  { id: 'ffHold', keyCode: 9, key: 'Tab', code: 'Tab' },
+  { id: 'ffToggle', keyCode: 9, key: 'Tab', code: 'Tab', shift: true },
+];
+const TAB = 9;
+
+/** Can a hotkey sit on this key? Tab, or any key a game button could have – never one of the Play view's other shortcuts. */
+export const hotkeyBindable = (keyCode) => keyCode === TAB || (bindable(keyCode) && !(keyCode in RESERVED));
+
+/** The same key with the same Shift (Tab and Shift+Tab are two hotkeys). */
+export const sameCombo = (a, b) => !!a && !!b && a.keyCode === b.keyCode && !!a.shift === !!b.shift;
+
+/**
+ * Stored mapping → the hotkeys' keys, { ffHold, ffToggle }: { keyCode, key, code?, shift? } or null. A key a game
+ * button has, a key no hotkey may have or the other hotkey's (with the same Shift) falls back to the default.
+ */
+export function resolveHotkeys(saved, lay = current) {
+  const buttons = new Set(Object.values(resolve(saved, lay)).filter(Boolean).map((v) => v.keyCode));
+  const taken = [];
+  const ok = (v) => !!v && Number.isInteger(v.keyCode) && hotkeyBindable(v.keyCode) && !buttons.has(v.keyCode) && !taken.some((x) => sameCombo(x, v));
+  const out = {};
+  for (const h of HOTKEYS) {
+    const s = saved?.[h.id] && typeof saved[h.id] === 'object' ? { ...live(saved[h.id], lay), shift: !!saved[h.id].shift } : null;
+    const v = ok(s) ? s : ok(h) ? h : null;
+    if (v) taken.push(v);
+    out[h.id] = v ? { keyCode: v.keyCode, key: v.key || '', ...(v.code ? { code: v.code } : {}), ...(v.shift ? { shift: true } : {}) } : null;
+  }
+  return out;
+}
+
+/** Is this key event ({ keyCode?, code?, key? }) on the binding's key? The physical key when both know it. */
+export function keyMatches(e, b) {
+  if (!b || !e) return false;
+  if (e.code && b.code) return e.code === b.code;
+  const code = Number.isInteger(e.keyCode) ? e.keyCode : e.key === 'Tab' ? TAB : null;
+  return code === b.keyCode;
+}
+
+/**
+ * Does a player page keep this key press (a DOM KeyboardEvent) to itself – a hotkey's key, with or without Shift? Then
+ * Tab doesn't move the focus out of the game while it is the fast-forward key. Ctrl / Alt / Cmd combos stay the browser's.
+ */
+export const isHotkeyKey = (e, hot) => !!e && !e.ctrlKey && !e.altKey && !e.metaKey && HOTKEYS.some((h) => keyMatches(e, hot?.[h.id]));
+
+/** Which hotkey a key press is ({ keyCode?, code?, key?, shift }): its key with exactly its Shift – else null. */
+export function hotkeyOf(e, hot) {
+  return HOTKEYS.find((h) => hot?.[h.id] && keyMatches(e, hot[h.id]) && !!e.shift === !!hot[h.id].shift)?.id || null;
 }
 
 // ---- controllers ------------------------------------------------------------------------------------------------
@@ -179,6 +238,82 @@ export function padMap(pads) {
     if (v) used.add(v);
   }
   return out;
+}
+
+/**
+ * Saved controller settings → the hotkeys' buttons, { ffHold, ffToggle }: a label, or '' (none – the default). Never
+ * a game button's, ZL / ZR (pause / turbo) or the other hotkey's.
+ */
+export function padHotkeys(pads) {
+  const game = new Set(Object.values(padMap(pads)).filter(Boolean));
+  const out = {};
+  for (const h of HOTKEYS) {
+    const want = pads?.map?.[h.id];
+    const ok = PAD_LABELS.includes(want) && !(want in PAD_HOTKEYS) && !game.has(want) && !Object.values(out).includes(want);
+    out[h.id] = ok ? want : '';
+  }
+  return out;
+}
+
+/**
+ * The controller buttons a player page hands to the play view, by their standard index → action: ZR / RT / R2 steps
+ * the turbo, ZL / LT / L2 and Home (16) pause, and the fast-forward buttons the player picked (ffHold: pressed and
+ * released, ffToggle: pressed).
+ */
+export function padActions(pads) {
+  const out = { 7: 'turbo', 6: 'pause', 16: 'pause' };
+  for (const [id, label] of Object.entries(padHotkeys(pads))) if (label) out[PAD_LABELS.indexOf(label)] = id;
+  return out;
+}
+
+/**
+ * One poll of those buttons (`held`: what was down at the last poll, updated here) → the messages for the play view,
+ * { type: 'emu-pad', action, down }: a press of each, and the release of the fast-forward hold. While the app's menus
+ * have the controller (appHasPad) only pause and turbo go through – ZL / Home still resume the game.
+ */
+export function padHotkeyPresses(pad, actions, held, appHas = false) {
+  const out = [];
+  for (const [i, action] of Object.entries(actions)) {
+    const on = !!pad?.buttons?.[i]?.pressed;
+    if (on && !held[i] && !(appHas && (action === 'ffHold' || action === 'ffToggle'))) out.push({ type: 'emu-pad', action, down: true });
+    else if (!on && held[i] && action === 'ffHold') out.push({ type: 'emu-pad', action, down: false });
+    held[i] = on;
+  }
+  return out;
+}
+
+/**
+ * Diagnostics of a player page's controller: the device that plays and the last presses – which standard button (index,
+ * label) came in, which game buttons it was mapped to and whether the app's menus had the controller then. A player's
+ * "the remapping doesn't apply in game" (Discord, Windows, a DualSense and an Xbox pad) is otherwise invisible.
+ */
+export function padRecorder(max = 40) {
+  const presses = [];
+  let last = [];
+  let picked = null;
+  return {
+    /** Every poll: the picked device (or null) and what the page made of it. */
+    see(pad, map, appHas = false) {
+      if (!pad) {
+        picked = null;
+        last = [];
+        return;
+      }
+      if (picked?.id !== pad.id || picked?.index !== pad.index) {
+        picked = { id: String(pad.id).slice(0, 120), index: pad.index, mapping: pad.mapping || '', buttons: pad.buttons.length, axes: pad.axes.length };
+      }
+      pad.buttons.forEach((b, i) => {
+        const on = !!b.pressed;
+        if (on && !last[i]) {
+          const label = PAD_LABELS[i] ?? null;
+          presses.push({ t: Math.round(performance.now()), i, label, game: Object.keys(map).filter((k) => map[k] === label), app: !!appHas });
+          if (presses.length > max) presses.shift();
+        }
+        last[i] = on;
+      });
+    },
+    info: (cfg, map) => ({ cfg: cfg || null, map, picked, presses: presses.slice() }),
+  };
 }
 
 /** Which kind of controller, from the id the browser reports (vendor ids: 054c Sony, 045e Microsoft, 057e Nintendo). */

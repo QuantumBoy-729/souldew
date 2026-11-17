@@ -12,7 +12,7 @@ import { CTR_LAYOUTS, ctrLayout, ctrTouchAt } from '/shared/ctrlayout.mjs';
 import { mountPad, isTouchScreen } from '/lib/ctrpad.mjs';
 
 const q = new URLSearchParams(location.search);
-const MSG = { VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7 };
+const MSG = { VIDEO: 2, AUDIO: 3, MEM: 4, STATE: 5, LOG: 6, EVENT: 7, FFSOUND: 8 };
 const CMD = { INPUT: 1, SPEED: 2, SAVE: 3, LOAD: 4, WATCH: 5, QUIT: 6, RESET: 7, FRAMESKIP: 8, WRITE: 9 };
 const post = (m) => window.parent?.postMessage(m, location.origin);
 
@@ -213,14 +213,38 @@ layout();
 // ff_frame), and says by how much ("ffrate", right before that sound – the worklet hands the ratio to the mixer when the
 // sound plays); the mixer then plays what Settings › "Turbo audio" asks for: the music recorded at 1× going on
 // ("music"), silence ("mute"), the sped-up original ("original"), or the host's sound with no mixer at all ("plain").
-// The worklet keeps a little more in hand than for the fast player: the sound comes between pictures of up to 7 MB.
+// For "music" the host also sends the core's own sound while it fast-forwards (message 8: the game's pace, its normal
+// pitch, full bandwidth): the mixer records that instead of slowing the sped-up sound back down, which kept only a k-th
+// of the bandwidth (the sped-up sound is low-passed before it is sped up) – at 4× muffled music.
+// The worklet keeps more in hand than for the fast player: the sound comes between pictures of up to 7 MB.
 const MAX_SOUND_RATIO = 16; // the host speeds its fast-forward sound up at most this much
-const audio = { ctx: null, node: null, gain: null, key: null, events: [], probes: [], rate: 0, exact: false };
+const audio = { ctx: null, node: null, gain: null, key: null, events: [], subs: new Set(), probes: [], taps: [], rate: 0, exact: false, win: null, last: null };
 /**
- * The worklet's buffer (frames): start / restart once 60 ms are there, fold the excess in gently above 200 ms (only if
- * the sound runs ahead of the sound card's clock for long – ctrhost paces 1× by the core's sound), never over 400 ms.
+ * The worklet's buffer (frames, lib/jitterring.mjs): start / restart once 60 ms are there – more after each gap, up to
+ * 240 ms, for a PC whose sound arrives late now and then –, read a little faster above 200 ms (the late sound queued
+ * behind a gap; ctrhost paces 1× by the core's sound, so nothing else piles up), skip ahead above 450 ms.
  */
-const ringFor = (rate) => ({ prime: Math.round(rate * 0.06), trim: Math.round(rate * 0.2), maxLag: Math.round(rate * 0.4) });
+const ringFor = (rate) => ({ prime: Math.round(rate * 0.06), primeMax: Math.round(rate * 0.24), trim: Math.round(rate * 0.2), maxLag: Math.round(rate * 0.45) });
+/**
+ * Diagnostics (perf().last, logged by the play view every 10 s): what the sound buffer went through over the last 10 s
+ * of sound – gaps, how long it was silent for them, how much it skipped, how long it read faster or slower, its fill.
+ */
+function ringWindow(r) {
+  const rate = audio.ctx?.sampleRate || 32728;
+  const w = audio.win;
+  if (!w || r.underruns < w.underruns) audio.win = { ...r, at: performance.now() };
+  else if (performance.now() - w.at >= 10000) {
+    audio.last = {
+      soundGaps: r.underruns - w.underruns,
+      soundSilentMs: Math.round(((r.silent - w.silent) / rate) * 1000),
+      soundSkippedMs: Math.round(((r.dropped - w.dropped) / rate) * 1000),
+      soundResampledPct: Math.round(((r.resampled - w.resampled) * 128 * 100) / (((performance.now() - w.at) / 1000) * rate)),
+      soundMs: Math.round((r.lag / rate) * 1000),
+      soundPrimeMs: Math.round((r.prime / rate) * 1000),
+    };
+    audio.win = { ...r, at: performance.now() };
+  }
+}
 function tellAudio(m) {
   audio.node?.port.postMessage(m);
 }
@@ -238,6 +262,8 @@ async function startAudio(rate) {
     await audio.ctx.audioWorklet.addModule('/lib/native-audio-worklet.mjs');
     audio.node = new AudioWorkletNode(audio.ctx, 'native-audio', { outputChannelCount: [2], processorOptions: { init: audioInit(), ...ringFor(audio.ctx.sampleRate) } });
     audio.node.port.onmessage = (e) => {
+      if (e.data?.type === 'tap') return audio.taps.splice(0).forEach((f) => f(e.data));
+      if (e.data?.type === 'ring') return ringWindow(e.data.ring);
       const ev = e.data?.e;
       if (!ev) return;
       if (ev.type === 'error') st.log.push(`turbo audio: ${ev.message}`);
@@ -245,6 +271,17 @@ async function startAudio(rate) {
       if (ev.type === 'state' || ev.type === 'error') {
         audio.events.push({ t: Math.round(performance.now()), ...ev });
         if (audio.events.length > 40) audio.events.shift();
+      }
+      // every mixer decision (loops found, switches, song keys) to the page's music log for "Save diagnostics" – as player.html;
+      // without it a native player's diagnostics showed only the speed steps (a Windows player's Pokémon Y report, 2.7.4)
+      if (ev.type !== 'probe') {
+        for (const f of audio.subs) {
+          try {
+            f({ t: Math.round(performance.now()), ...ev });
+          } catch {
+            // the page's problem
+          }
+        }
       }
     };
     audio.gain = audio.ctx.createGain();
@@ -260,12 +297,23 @@ async function startAudio(rate) {
 const wake = () => audio.ctx?.state === 'suspended' && audio.ctx.resume().catch(() => {});
 addEventListener('pointerdown', wake);
 addEventListener('keydown', wake);
-function onAudio(p) {
-  if (!audio.node || st.paused) return;
+/** The host's s16 stereo samples as floats (interleaved). */
+function floats(p) {
   const s = new Int16Array(p.buffer.slice(p.byteOffset, p.byteOffset + (p.length & ~1)));
   const f = new Float32Array(s.length);
   for (let i = 0; i < s.length; i++) f[i] = s[i] / 32768;
+  return f;
+}
+function onAudio(p) {
+  if (!audio.node || st.paused) return;
+  const f = floats(p);
   audio.node.port.postMessage(f, [f.buffer]);
+}
+/** Fast-forward: the core's own sound (message 8) – only "Music continues" records it, the other modes never use it. */
+function onFfSound(p) {
+  if (!audio.node || st.paused || st.turboAudio !== 'music') return;
+  const f = floats(p);
+  audio.node.port.postMessage({ type: 'ffsound', f }, [f.buffer]);
 }
 
 // ---- memory (the regions the live reader needs – and the bag for the cheats – ten times a second) ---------------------
@@ -428,6 +476,7 @@ async function pump() {
       const p = buf.subarray(o + 8, o + 8 + len);
       if (type === MSG.VIDEO) onVideo(p.slice());
       else if (type === MSG.AUDIO) onAudio(p);
+      else if (type === MSG.FFSOUND) onFfSound(p);
       else if (type === MSG.MEM) onMem(p);
       else if (type === MSG.EVENT) onEvent(p);
       else if (type === MSG.STATE) waiters.state.shift()?.(p.slice());
@@ -487,11 +536,13 @@ function sendInput() {
 }
 
 let keyMap = {}; // keyCode → button
+let hotkeys = controls.resolveHotkeys(null); // the fast-forward keys (Tab, Shift+Tab) – handled by the play view
 function forwardKey(e, down) {
-  post({ type: 'emu-key', key: e.key, code: e.code, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, down, repeat: e.repeat });
+  post({ type: 'emu-key', key: e.key, code: e.code, keyCode: e.keyCode, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, down, repeat: e.repeat, blur: e.blur || undefined });
 }
 addEventListener('keydown', (e) => {
   forwardKey(e, true);
+  if (controls.isHotkeyKey(e, hotkeys)) e.preventDefault(); // Tab fast-forwards here, it doesn't move the focus
   const b = keyMap[e.keyCode];
   if (b === undefined) return;
   e.preventDefault();
@@ -515,7 +566,7 @@ const screenPad = isTouchScreen()
   })
   : null;
 addEventListener('blur', () => {
-  forwardKey({ key: 'Tab', code: 'Tab' }, false);
+  forwardKey({ key: 'Tab', code: 'Tab', blur: true }, false); // ends a held fast-forward
   screenPad?.reset();
   inp.keys = 0;
   inp.pad = 0;
@@ -553,23 +604,45 @@ const lift = () => {
 canvas.addEventListener('pointerup', lift);
 canvas.addEventListener('pointercancel', lift);
 
+// Settings › Controls and › Controller (config.controls, config.pads): read when the page starts, and again whenever
+// they change while the game runs (__emu.setControls from the play view, as lib/nativeplayer.mjs)
+let padCfg = null; // config.pads
+let padButtons = controls.padMap(null); // game button → controller button label
+const padRec = controls.padRecorder(); // (diagnostics: __emu.padInfo)
+let padActions = controls.padActions(null); // controller hotkeys: standard button index → action
+let controlsSig = '';
+function applyControls(config) {
+  const sig = JSON.stringify([config?.controls || null, config?.pads || null]);
+  if (sig === controlsSig) return; // (the play view hands them over once the game runs – mostly what was read at start)
+  controlsSig = sig;
+  keyMap = controls.keyButtons(config?.controls);
+  hotkeys = controls.resolveHotkeys(config?.controls);
+  padCfg = config?.pads || null;
+  padButtons = controls.padMap(padCfg);
+  padActions = controls.padActions(padCfg);
+  post({ type: 'emu-pad', action: 'ffHold', down: false }); // (a fast-forward button held under the old buttons)
+  // what was held under the old buttons is let go (the next poll presses what is still down)
+  inp.keys = 0;
+  inp.pad = 0;
+  if (st.id) sendInput();
+}
+
 // controllers: the chosen device (lib/controls.mjs pickPad) – buttons by Settings › Controller, the left stick is the
 // Circle Pad, the right one the C-Stick; ZR/RT/R2 toggles turbo, ZL/LT/L2 and Home pause (as in player.html)
-function startPads(pads) {
-  const pm = controls.padMap(pads);
+function startPads() {
   const IDX = Object.fromEntries(controls.PAD_LABELS.map((l, i) => [l, i]));
-  const HOT = { 7: 'turbo', 6: 'pause', 16: 'pause' };
   const held = {};
   const axis = (x) => (Math.abs(x) < 0.12 ? 0 : Math.round(Math.max(-1, Math.min(1, x)) * 0x7fff));
   setInterval(() => {
     if (!st.ready || document.visibilityState === 'hidden') return;
-    const pad = controls.pickPad(navigator.getGamepads?.() || [], pads?.device || null);
+    const pad = controls.pickPad(navigator.getGamepads?.() || [], padCfg?.device || null);
+    padRec.see(pad, padButtons, controls.appHasPad());
     if (!pad) {
       if (inp.pad || inp.lx || inp.ly || inp.rx || inp.ry) Object.assign(inp, { pad: 0, lx: 0, ly: 0, rx: 0, ry: 0 }), sendInput();
       return;
     }
     let bits = 0;
-    for (const [btn, label] of Object.entries(pm)) {
+    for (const [btn, label] of Object.entries(padButtons)) {
       const i = IDX[label];
       if (i !== undefined && pad.buttons[i]?.pressed) bits |= 1 << BIT[btn];
     }
@@ -580,11 +653,7 @@ function startPads(pads) {
     inp.ly = axis(ly);
     inp.rx = axis(rx);
     inp.ry = axis(ry);
-    for (const [i, action] of Object.entries(HOT)) {
-      const on = !!pad.buttons[i]?.pressed;
-      if (on && !held[i]) post({ type: 'emu-pad', action });
-      held[i] = on;
-    }
+    for (const m of controls.padHotkeyPresses(pad, padActions, held, controls.appHasPad())) post(m);
     sendInput();
   }, 16);
 }
@@ -602,6 +671,8 @@ async function snapshot({ maxW = 192, type = 'image/jpeg', quality = 0.5 } = {})
 
 window.__emu = {
   ready: false,
+  /** Diagnostics: the controller settings this page plays with, the device it picked and the last presses. */
+  padInfo: () => padRec.info(padCfg, padButtons),
   system: () => '3ds',
   locateRam() {},
   ramInfo: () => ({ base: st.liveMemory && st.mem.length ? 0 : -1, tried: 0 }),
@@ -636,6 +707,10 @@ window.__emu = {
   },
   speed: () => st.speed,
   setFullTurbo() {}, // the native host always runs fast-forward at full power
+  /** Settings › Controls / Controller changed while the game runs: { controls, pads } as in config. */
+  setControls(config) {
+    applyControls(config);
+  },
   /**
    * Emulated frames so far – the host's count (four times a second), not the pictures that arrived: in fast-forward
    * the host sends only about 60 pictures a second, and counting those made every step look like 1× to the play view
@@ -698,6 +773,11 @@ window.__emu = {
     tellAudio({ type: 'song', key });
   },
   /** The mixer's last state changes (diagnostics). */
+  /** Every mixer event from now on (the page keeps them for "Save diagnostics"); returns the unsubscribe. */
+  onAudio(f) {
+    audio.subs.add(f);
+    return () => audio.subs.delete(f);
+  },
   turboAudio: () => ({ mode: st.turboAudio, key: audio.key, events: audio.events.slice(-10) }),
   /** Tests: what the mixer plays right now ({ playing, turbo, key, … }), or null without sound. */
   audioProbe() {
@@ -708,7 +788,23 @@ window.__emu = {
       setTimeout(() => res(null), 2000);
     });
   },
-  perf: () => ({ fps: st.fps, speed: st.hostSpeed, frames: st.hostFrame, shown: st.frames, title: st.title, liveMemory: st.liveMemory, error: st.error, renderer: st.renderer, log: st.log.slice(-20) }),
+  /**
+   * Tests, diagnostics: a recording of what the sound worklet plays over the next `seconds` (before the volume) –
+   * { sampleRate, l, r, ring } (ring: the buffer's numbers, lib/jitterring.mjs) – or null without sound.
+   */
+  audioTap(seconds = 10) {
+    if (!audio.node) return Promise.resolve(null);
+    return new Promise((res) => {
+      audio.taps.push(res);
+      tellAudio({ type: 'tap', frames: Math.round(audio.ctx.sampleRate * seconds) });
+      setTimeout(() => res(null), seconds * 1000 + 5000);
+    });
+  },
+  perf: () => ({
+    fps: st.fps, speed: st.hostSpeed, frames: st.hostFrame, shown: st.frames, title: st.title, liveMemory: st.liveMemory, error: st.error, renderer: st.renderer, log: st.log.slice(-20),
+    sound: audio.ctx ? { contextRate: audio.ctx.sampleRate, state: audio.ctx.state, baseLatencyMs: +(audio.ctx.baseLatency * 1000).toFixed(1), outputLatencyMs: +((audio.ctx.outputLatency || 0) * 1000).toFixed(1) } : null,
+    last: audio.last,
+  }),
   /** Tests / diagnostics: hold buttons by name (["a"], ["up", "b"] …) – what a controller would do. */
   hold(names = []) {
     inp.keys = names.reduce((m, n) => (n in BIT ? m | (1 << BIT[n]) : m), 0);
@@ -754,9 +850,8 @@ async function start() {
   await setLang(status?.config?.lang || guessLang()).catch(() => {});
   try {
     await controls.detectLayout(status?.config?.lang);
-    const m = controls.resolve(status?.config?.controls);
-    keyMap = Object.fromEntries(Object.entries(m).filter(([, v]) => v).map(([b, v]) => [v.keyCode, b]));
-    startPads(status?.config?.pads || null);
+    applyControls(status?.config);
+    startPads();
   } catch (e) {
     st.log.push(`controls: ${e.message}`);
   }

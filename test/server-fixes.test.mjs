@@ -49,7 +49,7 @@ test('run.json that is not an object, or names another id, cannot break the run 
   // what /api/status does for every run
   for (const m of runs) assert.equal(typeof runSummary(m.id).alive, 'number');
   assert.equal(readManifest('44444444').id, '44444444');
-  assert.throws(() => readManifest('22222222'), /kein Objekt/);
+  assert.throws(() => readManifest('22222222'), /not an object/);
 });
 
 test('doc upload merges per key: newer wins, an older upload cannot roll entries back', () => {

@@ -118,6 +118,13 @@ cross-builds with Ubuntu's MinGW-w64 (`g++-mingw-w64-x86-64-posix`, a CMake tool
 holds the few OS calls. Vulkan there is the system's loader (`vulkan-1.dll` / `libvulkan.so.1`); without it
 `server/lib/ctr.mjs` reports the part as missing and 3DS games open in the Azahar app.
 
+**Checking a Gen 1–5 game for the randomizer:** the new-run wizard's check (`POST /api/rom/inspect` →
+`inspectRom` in `server/lib/toolchain.mjs`) runs `SoulLinkBridge info <rom> <settings> <seed>`: UPR's info plus a trial
+run of the recommended preset – the whole randomization in memory, nothing written (under a second for a DS game). A game
+UPR loads but can't randomize (a ROM hack or release whose data isn't where UPR expects it) comes back as
+`reason: 'randoCrash'` and the wizard turns the randomizer off with that reason; a build that fails anyway answers
+`randoFailed` with only the Java exception's class name (`randomizerError`), the bridge's output stays in the server log.
+
 **Randomizing 3DS games** uses the same bundled UPR ZX 4.6.1 jar and `SoulLinkBridge` as Gen 1–5 – UPR's own
 Gen6/Gen7RomHandler (`server/lib/ctrrando.mjs`, the 3DS branch of `server/lib/build.mjs`). Input: a decrypted `.3ds`/
 `.cci`/`.cxi`/`.cia` (UPR reads the game's NCCH; an encrypted one ends with `@@CODE "encrypted"` → `ctrEncrypted` –
@@ -125,7 +132,8 @@ souldew has no keys and decrypts nothing). Output: one rebuilt, self-contained `
 LayeredFS mod folder), hashed with a stream and compared on a join like any ROM; a shared seed builds once and hard-links
 the others. The bridge runs with `-Xmx4608m` (UPR ZX's launcher value; Sun runs out below ~2 GB) and
 `-Dsouldew.upr.root=<cache>/upr-3ds/<id>`: the patched `SysConstants` ahead of the jar moves UPR's `tmp_<game>` folder
-out of the app (without the property – every Gen 1–5 build – nothing changes). UPR writes the `.cxi` with
+out of the app (Gen 1–5 runs get `<cache>/upr-work/<id>` the same way – two runs on one game, the wizard's check during a
+build, no longer take each other's unpacked files). UPR writes the `.cxi` with
 `RandomAccessFile("rw")`, which doesn't truncate, so the build always deletes the target first (it may be a hard link
 to the library's game). Rebuild the bridge after changing it:
 `javac --release 8 -cp tools/upr/PokeRandoZX.jar:tools/upr-bridge -d tools/upr-bridge tools/upr-bridge/SoulLinkBridge.java tools/upr-bridge/com/dabomstew/pkrandom/SysConstants.java`.

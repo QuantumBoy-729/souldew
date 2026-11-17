@@ -20,6 +20,9 @@
 //                                   whenever k changes, right before the first sound made with it)
 //                                   gpu: the Vulkan device chosen (name, type, vendor, driver …) – sent before the core
 //                                   touches it, so a crash in the driver still says which one it was
+//                    8 FFSOUND s16 stereo samples – fast-forward only, next to AUDIO: the core's own sound as it comes
+//                             (the game's pace: its normal pitch and full bandwidth, k seconds of it per second) – the
+//                             turbo mixer's "Music continues" records it instead of slowing AUDIO back down (see ff_frame)
 //   souldew → host   1 INPUT  u32 joypad bits (RETRO_DEVICE_ID_JOYPAD_*), s16 lx, ly, rx, ry, s16 px, py (pointer,
 //                             -0x7fff…0x7fff over the whole picture), u8 pressed
 //                    2 SPEED  f32 (1 = normal, 0 = paused, ≥ 100 = as fast as possible)
@@ -284,6 +287,9 @@ static size_t audio_n, audio_cap;
 // "ffrate"), so souldew's turbo mixer can slow the sound back down by exactly the ratio it was sped up with.
 // A low-pass at the new Nyquist frequency goes first (two biquads – the plain average let the overtones fold back
 // into the audible range: harsh). Above FF_MAXK× the queue overflows and skips ahead, with a short crossfade.
+// That low-pass leaves a k-th of the bandwidth: slowed back down by the mixer ("Music continues" while a song has no
+// loop yet), 4× sound kept nothing above ~1.8 kHz – muffled music. So each frame's sound also goes out as it is
+// (message 8, FFSOUND), and the mixer records that one: the music at its own pace and pitch, nothing resampled.
 #define FF_MAXK 16.0
 #define FF_TARGET 0.15 // seconds of output kept in the queue (latency doesn't matter much for sped-up sound)
 #define FF_GLIDE 0.15  // seconds k takes to follow the speed (time constant)
@@ -1675,7 +1681,12 @@ int main(int argc, char **argv) {
         pace_frames++;
         pace_samples += audio_n / 2;
       }
-    } else ff_frame(t - last_audio, sample_rate); // fast-forward: sped up, resampled to real time (see ff_frame)
+    } else {
+      // fast-forward: the core's sound as it is (the turbo mixer's music, see FFSOUND) – and sped up, resampled to real
+      // time (see ff_frame)
+      if (audio_n) send_msg(8, audio_buf, (uint32_t)(audio_n * sizeof *audio_buf));
+      ff_frame(t - last_audio, sample_rate);
+    }
     audio_n = 0;
     last_audio = t;
     if (t - last_mem >= 0.1) { // ten times a second, whatever the speed

@@ -207,3 +207,125 @@ test('controllers: the controller chosen in Settings plays whenever it is connec
   assert.equal(c.pickPad([mic, xbox, ps5], ` ${DUALSENSE}`), ps5);
   assert.equal(c.padKey('x'.repeat(300)).length, 200);
 });
+
+test('controller diagnostics: the picked device and each new press with the game buttons it maps to', async () => {
+  const { padRecorder, padMap } = await import('../web/lib/controls.mjs');
+  const rec = padRecorder(3);
+  const map = padMap({ preset: 'nintendo', map: { a: 'BUTTON_1', b: 'BUTTON_2' } });
+  const pad = (pressed) => ({ id: 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)', index: 0, mapping: 'standard',
+    buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: pressed.includes(i) })), axes: [0, 0, 0, 0] });
+  rec.see(pad([0]), map);
+  rec.see(pad([0]), map); // held: one press, not two
+  rec.see(pad([]), map);
+  rec.see(pad([1]), map, true);
+  const info = rec.info({ preset: 'nintendo' }, map);
+  assert.equal(info.picked.mapping, 'standard');
+  assert.deepEqual(info.presses.map(({ i, label, game, app }) => ({ i, label, game, app })), [
+    { i: 0, label: 'BUTTON_1', game: ['a'], app: false },
+    { i: 1, label: 'BUTTON_2', game: ['b'], app: true },
+  ]);
+  rec.see(null, map);
+  assert.equal(rec.info(null, map).picked, null);
+});
+
+test('fast-forward hotkeys: Tab held and Shift+Tab by default, as in mGBA – on every layout and preset', async () => {
+  const { HOTKEYS, resolveHotkeys, hotkeyOf, keyMatches, hotkeyBindable, isHotkeyKey } = await import('../web/lib/controls.mjs');
+  assert.deepEqual(HOTKEYS.map((h) => h.id), ['ffHold', 'ffToggle']);
+  for (const [name, lay] of Object.entries(LAYOUTS)) {
+    for (const p of [null, ...PRESETS.map((x) => presetMap(x.id, lay))]) {
+      const hot = resolveHotkeys(p, lay);
+      assert.deepEqual(hot.ffHold, { keyCode: 9, key: 'Tab', code: 'Tab' }, name);
+      assert.deepEqual(hot.ffToggle, { keyCode: 9, key: 'Tab', code: 'Tab', shift: true }, name);
+      // never on a game button's key
+      for (const b of BUTTONS) assert.notEqual(resolve(p, lay)[b.id].keyCode, 9);
+    }
+  }
+  const hot = resolveHotkeys(null, QWERTY);
+  // what the player pages forward ({ key, code, keyCode, shift }) – and older ones without the keyCode
+  assert.equal(hotkeyOf({ key: 'Tab', code: 'Tab', keyCode: 9, shift: false }, hot), 'ffHold');
+  assert.equal(hotkeyOf({ key: 'Tab', code: 'Tab', keyCode: 9, shift: true }, hot), 'ffToggle');
+  assert.equal(hotkeyOf({ key: 'Tab', shift: false }, hot), 'ffHold');
+  assert.equal(hotkeyOf({ key: 't', code: 'KeyT', keyCode: 84 }, hot), null, 'T stays the turbo step');
+  // the release of the hold key matches with or without Shift (Shift may be let go first)
+  assert.ok(keyMatches({ key: 'Tab', code: 'Tab', shift: true }, hot.ffHold));
+  assert.ok(!keyMatches({ key: 'g', code: 'KeyG', keyCode: 71 }, hot.ffHold));
+  // the player pages keep Tab (no focus change) – not Ctrl / Alt / Cmd combos, not other keys
+  assert.ok(isHotkeyKey({ keyCode: 9, code: 'Tab', shiftKey: true }, hot));
+  assert.ok(!isHotkeyKey({ keyCode: 9, code: 'Tab', ctrlKey: true }, hot));
+  assert.ok(!isHotkeyKey({ keyCode: 9, code: 'Tab', metaKey: true }, hot));
+  assert.ok(!isHotkeyKey({ keyCode: 90, code: 'KeyZ' }, hot));
+  // which keys a hotkey may have: Tab and any key a game button could have, none of the other shortcuts
+  assert.ok(hotkeyBindable(9));
+  assert.ok(hotkeyBindable(71)); // G
+  assert.ok(hotkeyBindable(32)); // Space
+  for (const c of [84, 80, 77, 70, 82, 27, 49, 116, 119, 123, 187]) assert.ok(!hotkeyBindable(c), String(c));
+  assert.ok(!hotkeyBindable(16)); // Shift alone
+});
+
+test('fast-forward hotkeys: re-bound like the game buttons; a clash falls back to the default', async () => {
+  const { resolveHotkeys, hotkeyOf, isHotkeyKey } = await import('../web/lib/controls.mjs');
+  const G = { keyCode: 71, key: 'g', code: 'KeyG' };
+  // re-bound: G held, Shift+G toggles; Tab is free again (the page may move the focus with it)
+  let hot = resolveHotkeys({ ffHold: G, ffToggle: { ...G, shift: true } }, QWERTY);
+  assert.deepEqual(hot.ffHold, G);
+  assert.deepEqual(hot.ffToggle, { ...G, shift: true });
+  assert.equal(hotkeyOf({ key: 'g', code: 'KeyG', keyCode: 71 }, hot), 'ffHold');
+  assert.equal(hotkeyOf({ key: 'G', code: 'KeyG', keyCode: 71, shift: true }, hot), 'ffToggle');
+  assert.equal(hotkeyOf({ key: 'Tab', code: 'Tab', keyCode: 9 }, hot), null);
+  assert.ok(!isHotkeyKey({ keyCode: 9, code: 'Tab' }, hot));
+  // the game buttons stay as they were
+  assert.deepEqual(resolve({ ffHold: G }, QWERTY), defaults(QWERTY));
+  // stored with the physical key: on a real QWERTZ keyboard the key printing Z (KeyY) still is the one picked
+  hot = resolveHotkeys({ ffHold: { keyCode: 89, key: 'y', code: 'KeyY' } }, realQwertz);
+  assert.equal(hot.ffHold.code, 'KeyY');
+  assert.equal(hot.ffHold.keyCode, 90);
+  // a game button's key (Z = A), one of the other shortcuts (T), Tab+Shift twice, junk → the default
+  assert.equal(resolveHotkeys({ ffHold: { keyCode: 90, key: 'z', code: 'KeyZ' } }, QWERTY).ffHold.keyCode, 9);
+  assert.equal(resolveHotkeys({ ffToggle: { keyCode: 84, key: 't', code: 'KeyT' } }, QWERTY).ffToggle.keyCode, 9);
+  assert.equal(resolveHotkeys({ ffHold: { keyCode: 'x' } }, QWERTY).ffHold.keyCode, 9);
+  hot = resolveHotkeys({ ffHold: { keyCode: 9, key: 'Tab', code: 'Tab', shift: true } }, QWERTY);
+  assert.deepEqual(hot.ffHold, { keyCode: 9, key: 'Tab', code: 'Tab', shift: true });
+  assert.equal(hot.ffToggle, null, 'Shift+Tab is taken and the default is the same – no toggle key then');
+  // the two swapped
+  hot = resolveHotkeys({ ffHold: { keyCode: 9, key: 'Tab', code: 'Tab', shift: true }, ffToggle: { keyCode: 9, key: 'Tab', code: 'Tab' } }, QWERTY);
+  assert.equal(hotkeyOf({ key: 'Tab', code: 'Tab', keyCode: 9, shift: true }, hot), 'ffHold');
+  assert.equal(hotkeyOf({ key: 'Tab', code: 'Tab', keyCode: 9 }, hot), 'ffToggle');
+  // a preset that puts a game button on the hotkey's key wins: the hotkey goes back to Tab
+  const wasd = presetMap('wasd', QWERTY); // B on J
+  assert.equal(resolveHotkeys({ ...wasd, ffHold: { keyCode: 74, key: 'j', code: 'KeyJ' } }, QWERTY).ffHold.keyCode, 9);
+});
+
+test('fast-forward on a controller: no button by default, never a game button, ZL / ZR or both on one', async () => {
+  const { padHotkeys, padActions, padHotkeyPresses, padMap: pm } = await import('../web/lib/controls.mjs');
+  assert.deepEqual(padHotkeys(null), { ffHold: '', ffToggle: '' });
+  assert.deepEqual(padActions(null), { 7: 'turbo', 6: 'pause', 16: 'pause' });
+  const pads = { preset: 'nintendo', map: { ffHold: 'RIGHT_STICK', ffToggle: 'LEFT_STICK' } };
+  assert.deepEqual(padHotkeys(pads), { ffHold: 'RIGHT_STICK', ffToggle: 'LEFT_STICK' });
+  assert.deepEqual(padActions(pads), { 7: 'turbo', 6: 'pause', 16: 'pause', 11: 'ffHold', 10: 'ffToggle' });
+  assert.deepEqual(pm(pads), pm(null), 'the game buttons don\'t change');
+  assert.deepEqual(padHotkeys({ map: { ffHold: 'BUTTON_2' } }), { ffHold: '', ffToggle: '' }, 'A (Nintendo layout) is a game button');
+  assert.deepEqual(padHotkeys({ map: { ffHold: 'RIGHT_BOTTOM_SHOULDER', ffToggle: 'LEFT_BOTTOM_SHOULDER' } }), { ffHold: '', ffToggle: '' });
+  assert.deepEqual(padHotkeys({ map: { ffHold: 'LEFT_STICK', ffToggle: 'LEFT_STICK' } }), { ffHold: 'LEFT_STICK', ffToggle: '' });
+  assert.deepEqual(padHotkeys({ map: { ffHold: 'NOPE' } }), { ffHold: '', ffToggle: '' });
+  // a game button moved onto the hotkey's button wins it
+  assert.equal(padHotkeys({ map: { a: 'RIGHT_STICK', ffHold: 'RIGHT_STICK' } }).ffHold, '');
+
+  // a poll after another: the hold is pressed and released, the toggle and ZR only pressed
+  const actions = padActions(pads);
+  const held = {};
+  const pad = { buttons: Array.from({ length: 17 }, () => ({ pressed: false })) };
+  const poll = (on, appHas = false) => {
+    pad.buttons.forEach((b, i) => (b.pressed = on.includes(i)));
+    return padHotkeyPresses(pad, actions, held, appHas).map((m) => `${m.action}:${m.down}`);
+  };
+  assert.deepEqual(poll([11]), ['ffHold:true']);
+  assert.deepEqual(poll([11]), [], 'held: nothing new');
+  assert.deepEqual(poll([]), ['ffHold:false']);
+  assert.deepEqual(poll([10]), ['ffToggle:true']);
+  assert.deepEqual(poll([]), [], 'the toggle has no release');
+  assert.deepEqual(poll([7]), ['turbo:true']);
+  assert.deepEqual(poll([]), []);
+  // the app's menus have the controller: fast-forward doesn't start, ZL still resumes the game
+  assert.deepEqual(poll([11, 6], true), ['pause:true']);
+  assert.deepEqual(poll([], true), ['ffHold:false'], 'a release never hurts');
+});

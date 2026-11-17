@@ -6,8 +6,9 @@ import { t, LANGS, setLang, currentLang } from '../lib/i18n.mjs';
 import { api } from '../lib/api.mjs';
 import { applyTheme } from '../lib/theme.mjs';
 import { BUTTONS, RESERVED, PRESETS, bindable, keyLabel, resolve as resolveControls, presetMap, activePreset, detectLayout, currentLayout,
-  PAD_LABELS, PAD_PRESETS, PAD_HOTKEYS, padMap, padFamily, padLabel, pickPad, padKey, looksLikePad } from '../lib/controls.mjs';
-import { SHORTCUTS, buttonLabel } from './guide.mjs';
+  PAD_LABELS, PAD_PRESETS, PAD_HOTKEYS, padMap, padFamily, padLabel, pickPad, padKey, looksLikePad,
+  HOTKEYS, resolveHotkeys, hotkeyBindable, sameCombo, padHotkeys } from '../lib/controls.mjs';
+import { SHORTCUTS, buttonLabel, comboLabel } from './guide.mjs';
 import { UpdateSection } from './update.mjs';
 import { PLATFORM, IS_TOUCH, IS_ANDROID, soundsText } from '../lib/platform.mjs';
 import { gpuBackends } from '/shared/gpu.mjs';
@@ -19,12 +20,19 @@ const SYSTEMS = [['gb', 'Game Boy'], ['gbc', 'Game Boy Color'], ['gba', 'Game Bo
 const externalOnly = (sys, status) => sys === '3ds' && !status?.ctr?.ok;
 const SYS_SHORT = { nds: 'DS', gba: 'GBA', gb: 'GB' };
 
-function shortcutAction(code) {
+function shortcutAction(code, controls) {
   const k = RESERVED[code];
   if (k === 'Esc') return t('ctl.escape', 'Cancel / leave fullscreen');
-  const hit = SHORTCUTS().find(([s]) => s === k) || (/\d$/.test(k) && SHORTCUTS().find(([s]) => s === '1–4'));
+  const all = SHORTCUTS(controls);
+  const hit = all.find(([s]) => s === k) || (/\d$/.test(k) && all.find(([s]) => s === '1–4'));
   return hit ? hit[1] : '';
 }
+
+/** The fast-forward hotkeys' names (lib/controls.mjs HOTKEYS) – rows below the game buttons, here and in Controller. */
+const hotkeyLabel = (id) => (id === 'ffHold' ? t('ctl.ffHold', 'Fast-forward (hold)') : t('ctl.ffToggle', 'Fast-forward on / off'));
+const isHotkey = (id) => HOTKEYS.some((h) => h.id === id);
+/** The hotkeys a stored mapping sets itself – kept when the game buttons change (a preset, a new key). */
+const savedHotkeys = (saved) => Object.fromEntries(HOTKEYS.filter((h) => saved?.[h.id]).map((h) => [h.id, saved[h.id]]));
 
 // "WASD" is printed as the layout prints those keys (ZQSD on AZERTY)
 const presetLabel = (id) => (id === 'arrows' ? t('ctl.presetArrows', 'Arrow keys')
@@ -35,11 +43,17 @@ function ControlsSection({ saved, save }) {
   const lang = currentLang();
   useEffect(() => { detectLayout(lang).then(() => setLayoutTick((x) => x + 1)); }, [lang]);
   const map = resolveControls(saved);
-  const active = activePreset(saved); // null = custom
-  const [listen, setListen] = useState(null); // button waiting for its new key
+  const hot = resolveHotkeys(saved); // the fast-forward keys – rows of their own below the game buttons
+  const active = activePreset(saved); // null = custom (the game buttons; the hotkeys don't count)
+  const [listen, setListen] = useState(null); // button or hotkey waiting for its new key
   const [msg, setMsg] = useState(null); // { text, swap?: { id, other, k } }
   const bound = useRef(0);
   const store = (next) => { setMsg(null); save({ controls: next }); };
+  const keyOf = (id) => (isHotkey(id) ? hot[id] : map[id]);
+  const nameOf = (id) => (isHotkey(id) ? hotkeyLabel(id) : buttonLabel(id));
+  // what a row may take over from another in a swap: a game button takes no Tab and no Shift
+  const fits = (id, k) => !!k && (isHotkey(id) ? hotkeyBindable(k.keyCode) : bindable(k.keyCode) && !(k.keyCode in RESERVED));
+  const plain = (id, k) => (isHotkey(id) || !k ? k : { keyCode: k.keyCode, key: k.key, ...(k.code ? { code: k.code } : {}) });
   useEffect(() => {
     if (!listen) return;
     const onKey = (e) => {
@@ -47,26 +61,49 @@ function ControlsSection({ saved, save }) {
       e.preventDefault();
       e.stopPropagation();
       if (e.key === 'Escape') { setListen(null); setMsg(null); return; }
-      const k = { keyCode: e.keyCode, key: e.key, code: e.code };
-      if (e.keyCode in RESERVED) return setMsg({ text: t('ctl.reserved', '{key} is already a shortcut while playing ({action}). Press another key.', { key: keyLabel(k), action: shortcutAction(e.keyCode) }) });
-      if (!bindable(e.keyCode)) return setMsg({ text: t('ctl.unbindable', 'This key can’t be used for the game. Press another key.') });
+      const hk = isHotkey(listen);
+      // a hotkey may have Shift (Shift+Tab), the game buttons are keys of their own
+      const k = { keyCode: e.keyCode, key: e.key, code: e.code, ...(hk && e.shiftKey ? { shift: true } : {}) };
+      if (hk && (e.ctrlKey || e.altKey || e.metaKey)) return setMsg({ text: t('ctl.hotkeyUnbindable', 'This key can’t be used for this shortcut. Press another key.') });
+      if (e.keyCode in RESERVED && !(hk && hotkeyBindable(e.keyCode))) {
+        if (!shortcutAction(e.keyCode, saved)) return setMsg({ text: t('ctl.unbindable', 'This key can’t be used for the game. Press another key.') });
+        return setMsg({ text: t('ctl.reserved', '{key} is already a shortcut while playing ({action}). Press another key.', { key: keyLabel(k), action: shortcutAction(e.keyCode, saved) }) });
+      }
+      if (hk ? !hotkeyBindable(e.keyCode) : !bindable(e.keyCode)) {
+        return setMsg({ text: hk ? t('ctl.hotkeyUnbindable', 'This key can’t be used for this shortcut. Press another key.') : t('ctl.unbindable', 'This key can’t be used for the game. Press another key.') });
+      }
       bound.current = Date.now();
       setListen(null);
-      const other = BUTTONS.find((b) => b.id !== listen && map[b.id]?.keyCode === e.keyCode);
-      if (other) return setMsg({ text: t('ctl.taken', '{key} is already used for {button}.', { key: keyLabel(k), button: buttonLabel(other.id) }), swap: { id: listen, other: other.id, k } });
-      if (map[listen]?.keyCode !== e.keyCode) store({ ...map, [listen]: k });
+      // taken: a game button with this key – or, for a hotkey, the other hotkey with this key and Shift
+      const other = [...BUTTONS.map((b) => b.id), ...HOTKEYS.map((h) => h.id)].find((id) => id !== listen && keyOf(id)
+        && (isHotkey(id) && hk ? sameCombo(keyOf(id), k) : keyOf(id).keyCode === e.keyCode));
+      if (other) {
+        return setMsg({ text: t('ctl.taken', '{key} is already used for {button}.', { key: comboLabel(k), button: nameOf(other) }),
+          ...(fits(other, keyOf(listen)) ? { swap: { id: listen, other, k } } : {}) });
+      }
+      // (a new hotkey leaves the game buttons as they are stored – the default preset keeps following the layout)
+      if (!(hk ? sameCombo(hot[listen], k) : map[listen]?.keyCode === e.keyCode)) store(hk ? { ...(saved || {}), [listen]: k } : { ...savedHotkeys(saved), ...map, [listen]: k });
       else setMsg(null);
     };
     addEventListener('keydown', onKey, true);
     return () => removeEventListener('keydown', onKey, true);
   }, [listen, saved]);
-  const swap = () => { const { id, other, k } = msg.swap; store({ ...map, [id]: k, [other]: map[id] }); };
-  // the default preset is stored as "nothing saved", so it keeps following the keyboard layout
-  const pick = (id) => { setListen(null); if (id !== active) store(id === PRESETS[0].id ? null : presetMap(id)); };
+  const swap = () => {
+    const { id, other, k } = msg.swap;
+    const base = isHotkey(id) && isHotkey(other) ? saved || {} : { ...savedHotkeys(saved), ...map };
+    store({ ...base, [id]: k, [other]: plain(other, keyOf(id)) });
+  };
+  // the default preset is stored as "nothing saved", so it keeps following the keyboard layout (own hotkeys stay)
+  const pick = (id) => {
+    setListen(null);
+    if (id === active) return;
+    const own = savedHotkeys(saved);
+    store(id === PRESETS[0].id ? (Object.keys(own).length ? own : null) : { ...presetMap(id), ...own });
+  };
   const lay = currentLayout();
   return html`<section class="panel stack">
     <h2>${t('set.controls', 'Controls')}</h2>
-    <p class="small muted">${t('set.controlsText', 'Keyboard keys for the built-in emulator. Click a key, then press the new one. Changes apply the next time a game starts.')}</p>
+    <p class="small muted">${t('set.controlsText', 'Keyboard keys for the built-in emulator. Click a key, then press the new one. Changes apply right away, also to a game that is running.')}</p>
     <div class="row">
       <div class="seg" role="group" aria-label=${t('ctl.presets', 'Key presets')}>
         ${PRESETS.map((p) => html`<button type="button" class=${active === p.id ? 'on' : ''} aria-pressed=${active === p.id} onClick=${() => pick(p.id)}>${presetLabel(p.id)}</button>`)}
@@ -81,6 +118,12 @@ function ControlsSection({ saved, save }) {
           onClick=${() => { if (Date.now() - bound.current < 400) return; setMsg(null); setListen(listen === b.id ? null : b.id); }}
           onBlur=${() => setListen((l) => (l === b.id ? null : l))}>${listen === b.id ? t('ctl.press', 'Press a key …') : keyLabel(map[b.id])}</button></td>
         <td class="small faint">${(b.systems || ['nds', 'gba', 'gb']).map((s) => SYS_SHORT[s]).join(' · ')}</td></tr>`)}
+      <tr><th colspan="3">${t('guide.shortcuts', 'Shortcuts while playing')}</th></tr>
+      ${HOTKEYS.map((h) => html`<tr><td>${hotkeyLabel(h.id)}</td><td>
+        <button type="button" class=${`kbd ctl-key${listen === h.id ? ' on' : ''}`} aria-label=${`${hotkeyLabel(h.id)}: ${comboLabel(hot[h.id])}`}
+          onClick=${() => { if (Date.now() - bound.current < 400) return; setMsg(null); setListen(listen === h.id ? null : h.id); }}
+          onBlur=${() => setListen((l) => (l === h.id ? null : l))}>${listen === h.id ? t('ctl.press', 'Press a key …') : comboLabel(hot[h.id])}</button></td>
+        <td class="small faint">${['nds', 'gba', 'gb'].map((s) => SYS_SHORT[s]).join(' · ')}</td></tr>`)}
     </tbody></table>
     ${msg && html`<div class="note row" role="status"><span class="grow">${msg.text}</span>
       ${msg.swap && html`<button class="btn small" onClick=${swap}>${t('ctl.swap', 'Swap keys')}</button>`}
@@ -230,8 +273,11 @@ function PadSection({ saved, save, nav, saveNav }) {
   const keep = saved?.device ? { device: saved.device } : {};
   const family = pad?.family || 'generic';
   const map = padMap(saved);
+  const hot = padHotkeys(saved); // the fast-forward buttons – none unless picked here
   const preset = PAD_PRESETS.find((p) => p.id === saved?.preset) || PAD_PRESETS[0];
-  const custom = !!saved?.map && BUTTONS.some((b) => map[b.id] !== preset.map[b.id]);
+  const custom = !!saved?.map && (BUTTONS.some((b) => map[b.id] !== preset.map[b.id]) || HOTKEYS.some((h) => hot[h.id]));
+  // what is stored: every game button, the hotkeys only when they have a button (the config takes no empty labels)
+  const stored = (m) => Object.fromEntries(Object.entries(m).filter(([, v]) => v));
   const [listen, setListen] = useState(null);
   const [msg, setMsg] = useState(null);
   const before = useRef(null);
@@ -247,11 +293,18 @@ function PadSection({ saved, save, nav, saveNav }) {
       setMsg(t('pad.hotkey', '{button} is already used while playing ({action}). Press another button.', { button: padLabel(label, family, PAD_POS()), action: PAD_HOTKEYS[label] === 'turbo' ? t('keys.turbo', 'Turbo') : t('keys.pause', 'Pause / resume') }));
       return;
     }
-    const other = BUTTONS.find((b) => b.id !== listen && map[b.id] === label);
-    const next = { ...map, [listen]: label, ...(other ? { [other.id]: map[listen] } : {}) };
+    const all = { ...map, ...hot };
+    const hk = isHotkey(listen);
+    const other = Object.keys(all).find((id) => id !== listen && all[id] === label);
+    // a hotkey doesn't push a game button off its button (that one would be left without any) – press another one
+    if (hk && other && !isHotkey(other)) {
+      setMsg(t('ctl.taken', '{key} is already used for {button}.', { key: padLabel(label, family, PAD_POS()), button: buttonLabel(other) }));
+      return;
+    }
+    const next = { ...all, [listen]: label, ...(other ? { [other]: all[listen] } : {}) };
     setListen(null);
-    setMsg(other ? t('pad.swapped', '{button} was on {other} – the two swapped.', { button: padLabel(label, family, PAD_POS()), other: buttonLabel(other.id) }) : null);
-    save({ pads: { preset: preset.id, map: next, ...keep } });
+    setMsg(other ? t('pad.swapped', '{button} was on {other} – the two swapped.', { button: padLabel(label, family, PAD_POS()), other: isHotkey(other) ? hotkeyLabel(other) : buttonLabel(other) }) : null);
+    save({ pads: { preset: preset.id, map: stored(next), ...keep } });
   }, [pad?.pressed?.join(), listen]);
   useEffect(() => {
     if (!listen) return undefined;
@@ -272,7 +325,7 @@ function PadSection({ saved, save, nav, saveNav }) {
   };
   return html`<section class="panel stack">
     <h2>${t('pad.title', 'Controller')}</h2>
-    <p class="small muted">${t('pad.text', 'PlayStation, Xbox, Switch and other controllers work over USB or Bluetooth. Click a button in the table, then press the new one on the controller. Changes apply the next time a game starts.')}</p>
+    <p class="small muted">${t('pad.text', 'PlayStation, Xbox, Switch and other controllers work over USB or Bluetooth. Click a button in the table, then press the new one on the controller. Changes apply right away, also to a game that is running.')}</p>
     <div class=${`pad-status ${pad ? 'on' : ''}`} role="status">
       <span class=${`led green ${pad ? 'on' : ''}`}></span>
       ${pad ? html`<span><b>${FAMILY_NAMES()[family]}</b> <span class="small faint">${padName(pad.id)}</span>${!pad.standard ? html` <span class="chip">${t('pad.nonStandard', 'unusual layout – check the buttons below')}</span>` : ''}</span>`
@@ -296,6 +349,15 @@ function PadSection({ saved, save, nav, saveNav }) {
             title=${pad ? '' : t('pad.connectFirst', 'Connect a controller first')}
             onClick=${() => { before.current = null; setMsg(null); setListen(listen === b.id ? null : b.id); }}>
             ${listen === b.id ? t('pad.press', 'Press a button …') : padLabel(map[b.id], family, PAD_POS())}</button></td></tr>`;
+      })}
+      <tr><th colspan="2">${t('guide.shortcuts', 'Shortcuts while playing')}</th></tr>
+      ${HOTKEYS.map((h) => {
+        const lit = pad && hot[h.id] && pad.pressed[PAD_LABELS.indexOf(hot[h.id])];
+        return html`<tr class=${lit ? 'pad-lit' : ''}><td>${hotkeyLabel(h.id)}</td><td>
+          <button type="button" class=${`kbd ctl-key${listen === h.id ? ' on' : ''}`} disabled=${!pad}
+            title=${pad ? '' : t('pad.connectFirst', 'Connect a controller first')}
+            onClick=${() => { before.current = null; setMsg(null); setListen(listen === h.id ? null : h.id); }}>
+            ${listen === h.id ? t('pad.press', 'Press a button …') : padLabel(hot[h.id], family, PAD_POS())}</button></td></tr>`;
       })}
     </tbody></table>
     ${msg && html`<div class="note" role="status">${msg}</div>`}

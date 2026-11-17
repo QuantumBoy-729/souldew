@@ -62,7 +62,7 @@ export function makeId(path, entry) {
 }
 
 export function resolveId(id, config = {}) {
-  if (!id) throw httpError(400, 'Keine Datei angegeben', 'noFile');
+  if (!id) throw httpError(400, 'No file given', 'noFile');
   // split at the first '::' only – an entry inside the archive may contain '::' itself
   const s = String(id);
   const cut = s.indexOf('::');
@@ -70,8 +70,8 @@ export function resolveId(id, config = {}) {
   const entry = cut < 0 ? undefined : s.slice(cut + 2);
   const abs = resolve(file);
   const roots = libraryRoots(config);
-  if (!roots.some((r) => isInside(abs, r))) throw httpError(403, 'Datei liegt nicht in einem Bibliotheksordner', 'notInLibrary');
-  if (!existsSync(abs)) throw httpError(404, `Datei nicht gefunden: ${basename(abs)}`, 'fileNotFoundNamed', { name: basename(abs) });
+  if (!roots.some((r) => isInside(abs, r))) throw httpError(403, 'The file is not in a library folder', 'notInLibrary');
+  if (!existsSync(abs)) throw httpError(404, `File not found: ${basename(abs)}`, 'fileNotFoundNamed', { name: basename(abs) });
   return { abs, entry };
 }
 
@@ -79,7 +79,7 @@ export function loadFile(id, config = {}) {
   const { abs, entry } = resolveId(id, config);
   if (!entry) return new Uint8Array(readFileSync(abs));
   const e = listZip(abs).find((x) => x.name === entry);
-  if (!e) throw httpError(404, `"${entry}" nicht im Archiv gefunden`, 'notInArchive', { entry });
+  if (!e) throw httpError(404, `"${entry}" not found in the archive`, 'notInArchive', { entry });
   return new Uint8Array(readZipEntry(abs, e));
 }
 
@@ -182,7 +182,7 @@ async function unpackOne(zipPath, { entry, info }, onUnpack, dir) {
   try {
     base = entryFileName(entry.name);
   } catch {
-    throw httpError(400, `Unsicherer Dateiname im Zip: ${entry.name}`, 'zipEntryUnsafe', { name: entry.name });
+    throw httpError(400, `Unsafe file name in the zip: ${entry.name}`, 'zipEntryUnsafe', { name: entry.name });
   }
   let safe = safeFileName(base, { fallback: 'game.3ds', maxBytes: 200 });
   if (safe.startsWith('.')) safe = `_${safe.slice(1)}`; // hidden files are skipped by the library scan
@@ -195,7 +195,7 @@ async function unpackOne(zipPath, { entry, info }, onUnpack, dir) {
   }
   const free = freeBytes(dir);
   if (free !== null && free < entry.uncompSize + SPACE_MARGIN) {
-    throw httpError(507, `Nicht genug Speicherplatz für ${base}: ${gb(entry.uncompSize)} nötig, ${gb(free)} frei`, 'diskFull', { name: base, need: gb(entry.uncompSize), free: gb(free) });
+    throw httpError(507, `Not enough free disk space for ${base}: it needs ${gb(entry.uncompSize)}, ${gb(free)} are free`, 'diskFull', { name: base, need: gb(entry.uncompSize), free: gb(free) });
   }
   const ev = { name: base.replace(/\.[^.]+$/, ''), gameId: matchCatalog(info, catalog())?.game?.id || null, size: entry.uncompSize };
   onUnpack?.({ state: 'start', done: 0, ...ev });
@@ -218,11 +218,11 @@ async function unpackOne(zipPath, { entry, info }, onUnpack, dir) {
 
 /** A failed unpack as the httpError the page translates (web/lib/errors.mjs). */
 function unpackError(e, name, size, dir) {
-  if (e.zipCode === 'damaged') return httpError(422, `${name} ist im Zip beschädigt (${e.message})`, 'zipDamaged', { name });
+  if (e.zipCode === 'damaged') return httpError(422, `${name} is damaged in the zip (${e.message})`, 'zipDamaged', { name });
   if (e.zipCode === 'method') return httpError(415, `${name}: ${e.message}`, 'zipMethod', { name });
-  if (e.zipCode === 'tooLarge') return httpError(413, `Datei zu groß: ${name}`, 'fileTooLarge');
-  if (e.code === 'ENOSPC') return httpError(507, `Nicht genug Speicherplatz für ${name}`, 'diskFull', { name, need: gb(size), free: gb(freeBytes(dir) || 0) });
-  return httpError(500, `${name} konnte nicht entpackt werden: ${e.message}`, 'unpackFailed', { name, why: e.message });
+  if (e.zipCode === 'tooLarge') return httpError(413, `File too large: ${name}`, 'fileTooLarge');
+  if (e.code === 'ENOSPC') return httpError(507, `Not enough free disk space for ${name}`, 'diskFull', { name, need: gb(size), free: gb(freeBytes(dir) || 0) });
+  return httpError(500, `${name} couldn’t be unpacked: ${e.message}`, 'unpackFailed', { name, why: e.message });
 }
 
 function describeRom(info, cat) {
@@ -302,9 +302,9 @@ export function scanLibrary(config = {}) {
         patches.push(p);
       } else if (ext === 'zip') {
         let cached = index[cacheKey];
-        // (indexes before 2.7.0 didn't look for 3DS games: no `ctr`)
-        if (!cached || !cached.ctr || cached.patches?.some((x) => !('resultCrc' in x))) {
-          cached = { roms: [], patches: [], notes: [], ctr: [] };
+        // (indexes before 2.7.0 didn't look for 3DS games: no `ctr`; before 2.8.1 they skipped .sgb ROMs: no `sgb`)
+        if (!cached || !cached.ctr || !cached.sgb || cached.patches?.some((x) => !('resultCrc' in x))) {
+          cached = { roms: [], patches: [], notes: [], ctr: [], sgb: true };
           let entries = [];
           try {
             entries = listZip(path);
@@ -403,14 +403,14 @@ function applyRomHacks(roms, config, cat) {
  */
 export function setRomHack(marks, { crc, hackId, name, none } = {}, cat = catalog()) {
   const key = String(crc || '').toUpperCase();
-  if (!/^[0-9A-F]{8}$/.test(key)) throw httpError(400, 'Ungültige Prüfsumme', 'badRomHack');
+  if (!/^[0-9A-F]{8}$/.test(key)) throw httpError(400, 'Invalid checksum', 'badRomHack');
   const next = { ...(marks && typeof marks === 'object' && !Array.isArray(marks) ? marks : {}) };
   if (hackId != null) {
-    if (!(cat.hacks || []).some((h) => h.id === hackId)) throw httpError(400, 'Unbekannter ROM-Hack', 'badRomHack');
+    if (!(cat.hacks || []).some((h) => h.id === hackId)) throw httpError(400, 'Unknown ROM hack', 'badRomHack');
     next[key] = { hackId };
   } else if (name != null) {
     const clean = String(name).normalize('NFC').replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]+/g, ' ').replace(/\s+/g, ' ').trim();
-    if (!clean || clean.length > 80) throw httpError(400, 'Ungültiger Name', 'badRomHack');
+    if (!clean || clean.length > 80) throw httpError(400, 'Invalid name', 'badRomHack');
     next[key] = { name: clean };
   } else if (none) {
     next[key] = { none: true };
@@ -677,9 +677,9 @@ export function importRoots(config = {}, { roots = discoverRoots() } = {}) {
  * (server/lib/grants.mjs) – links followed. → the resolved path; otherwise 400 badPath / 403 pathNotApproved.
  */
 export function approvedImportPath(p, config = {}, { roots } = {}) {
-  if (typeof p !== 'string' || !p || p.length > 4096 || p.includes('\0') || !isAbsolute(p)) throw httpError(400, 'Ungültiger Pfad', 'badPath');
+  if (typeof p !== 'string' || !p || p.length > 4096 || p.includes('\0') || !isAbsolute(p)) throw httpError(400, 'Invalid path', 'badPath');
   if (wasPicked(p) || insideAny(p, roots || importRoots(config))) return resolve(p);
-  throw httpError(403, `Nicht freigegeben: ${basename(p)} – über „Dateien hinzufügen“ auswählen`, 'pathNotApproved', { name: basename(p) });
+  throw httpError(403, `Not approved: ${basename(p)} – pick it with “Add files”`, 'pathNotApproved', { name: basename(p) });
 }
 
 /**
@@ -688,10 +688,10 @@ export function approvedImportPath(p, config = {}, { roots } = {}) {
  * emulator (resolveId), so a raw path from the page is never enough. → the resolved path, else 400 / 403.
  */
 export function approvedFolder(p, config = {}) {
-  if (typeof p !== 'string' || !p || p.length > 4096 || p.includes('\0') || !isAbsolute(p)) throw httpError(400, 'Ungültiger Pfad', 'badPath');
+  if (typeof p !== 'string' || !p || p.length > 4096 || p.includes('\0') || !isAbsolute(p)) throw httpError(400, 'Invalid path', 'badPath');
   const abs = resolve(p);
   if (wasPicked(abs) || (config.libraryFolders || []).some((f) => samePath(f, abs))) return abs;
-  throw httpError(403, `Ordner nicht freigegeben: ${basename(abs)} – über „Ordner verwenden“ auswählen`, 'folderNotApproved', { name: basename(abs) });
+  throw httpError(403, `Folder not approved: ${basename(abs)} – pick it with “Use a folder”`, 'folderNotApproved', { name: basename(abs) });
 }
 
 /**
@@ -701,7 +701,7 @@ export function approvedFolder(p, config = {}) {
  * follows it) – the zip itself only when it holds other ROMs or patches too. → a Promise of the library files added.
  */
 export function importFiles(paths, config = {}, { roots, onUnpack = null } = {}) {
-  if (!Array.isArray(paths)) throw httpError(400, 'Ungültiger Pfad', 'badPath');
+  if (!Array.isArray(paths)) throw httpError(400, 'Invalid path', 'badPath');
   const allowedRoots = roots || importRoots(config);
   const files = paths.map((p) => approvedImportPath(p, config, { roots: allowedRoots }));
   return (async () => {
@@ -759,11 +759,11 @@ export async function placeUploadedZip(tmp, target, { onUnpack = null } = {}) {
 /** A zipped 3DS game the library scan found (scanLibrary().zipped, id "zip::entry"): unpacked into the library folder. */
 export async function unpackLibraryZip(id, config = {}, { onUnpack = null } = {}) {
   const { abs, entry } = resolveId(id, config);
-  if (!entry) throw httpError(400, 'Kein Zip-Eintrag angegeben', 'noFile');
+  if (!entry) throw httpError(400, 'No zip entry given', 'noFile');
   const e = listZip(abs).find((x) => x.name === entry);
-  if (!e) throw httpError(404, `"${entry}" nicht im Archiv gefunden`, 'notInArchive', { entry });
+  if (!e) throw httpError(404, `"${entry}" not found in the archive`, 'notInArchive', { entry });
   const games = zipCtrGames(abs, [e]);
-  if (!games.length) throw httpError(400, 'Kein 3DS-Spiel', 'notCtr');
+  if (!games.length) throw httpError(400, 'Not a Nintendo 3DS game', 'notCtr');
   return unpackZipGames(abs, { games, onUnpack });
 }
 
@@ -775,7 +775,7 @@ export async function unpackLibraryZip(id, config = {}, { onUnpack = null } = {}
 export function uploadTarget(name) {
   let safe = safeFileName(name, { fallback: '', maxBytes: 200 }); // file systems allow 255 bytes per name
   const ext = extname(safe).slice(1).toLowerCase();
-  if (![...ROM_EXTENSIONS, ...CTR_EXTENSIONS, ...PATCH_EXTENSIONS, 'zip'].includes(ext)) throw httpError(400, 'Nur ROMs (.gb/.gbc/.gba/.nds/.3ds/.cci/.cxi/.cia/.3dsx), Patches oder .zip', 'uploadType');
+  if (![...ROM_EXTENSIONS, ...CTR_EXTENSIONS, ...PATCH_EXTENSIONS, 'zip'].includes(ext)) throw httpError(400, 'Only ROMs (.gb/.gbc/.gba/.nds/.3ds/.cci/.cxi/.cia/.3dsx), patches or .zip', 'uploadType');
   if (safe.startsWith('.')) safe = `_${safe.slice(1)}`; // hidden files are skipped by the library scan
   mkdirSync(LIBRARY_DIR, { recursive: true });
   return join(LIBRARY_DIR, safe);
