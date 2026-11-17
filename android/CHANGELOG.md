@@ -2,6 +2,19 @@
 
 `android-release.yml` takes the release notes from the section of the version being released (`android/version.properties`).
 
+## 1.1.0
+
+**Personal build on souldew 2.8.1** – the Android app now carries every fix of souldew 2.7.5 to 2.8.1 (the server and the
+web app are the same souldew as on the desktop, so a SoulLink still works across Android and desktop players).
+
+- **Shiny rate** for new runs of the original Gen 3–5 games (1 in 4096 down to any custom rate), built into every player's game.
+- **Fast-forward keys** and the other changes of the desktop releases: catching demos no longer count as your encounter, the
+  battle help folds in “What hits …”, Rotom's forms in Black and White, `.sgb` files, messages in your own language.
+- Build log lines and randomizer errors are translated like on the desktop.
+- Install over 1.0.0 (same signing key): your runs, games and settings stay.
+
+Not re-tested on a device since 1.0.0 beyond the build itself; the 3DS player was only tried on one Snapdragon 8 Gen 3 tablet.
+
 ## 1.0.0
 
 **The first release of souldew for Android** – the SoulLink / Nuzlocke tracker and its built-in emulator as an app for phones
