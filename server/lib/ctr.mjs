@@ -169,11 +169,11 @@ export function command(type, payload = Buffer.alloc(0)) {
  */
 export function checkCommands(body) {
   const { messages, rest } = splitMessages(body);
-  if (rest.length || !messages.length) throw httpError(400, 'Ungültiger Befehl', 'badCommand');
+  if (rest.length || !messages.length) throw httpError(400, 'Invalid command', 'badCommand');
   const limits = { [CMD.INPUT]: 32, [CMD.SPEED]: 4, [CMD.SAVE]: 0, [CMD.LOAD]: 256 * 1024 * 1024, [CMD.WATCH]: 4 + 16 * 8, [CMD.QUIT]: 0, [CMD.RESET]: 0, [CMD.FRAMESKIP]: 4, [CMD.WRITE]: 12 + 2 * CTR_WRITE_MAX };
   for (const m of messages) {
-    if (!(m.type in limits) || m.payload.length > limits[m.type]) throw httpError(400, 'Ungültiger Befehl', 'badCommand');
-    if (m.type === CMD.WRITE && !ctrWriteOk(m.payload)) throw httpError(400, 'Ungültiger Befehl', 'badCommand');
+    if (!(m.type in limits) || m.payload.length > limits[m.type]) throw httpError(400, 'Invalid command', 'badCommand');
+    if (m.type === CMD.WRITE && !ctrWriteOk(m.payload)) throw httpError(400, 'Invalid command', 'badCommand');
   }
   return body;
 }
@@ -495,7 +495,7 @@ export class CtrSessions {
 
   get(id) {
     const s = this.current;
-    if (!s || s.id !== id) throw httpError(404, 'Keine laufende 3DS-Sitzung', 'noCtrSession');
+    if (!s || s.id !== id) throw httpError(404, 'No 3DS game is running', 'noCtrSession');
     return s;
   }
 
@@ -528,7 +528,7 @@ export class CtrSessions {
 
   send(id, body) {
     const s = this.get(id);
-    if (s.exit) throw httpError(409, 'Die 3DS-Sitzung ist beendet', 'ctrEnded');
+    if (s.exit) throw httpError(409, 'The 3DS game has stopped', 'ctrEnded');
     s.child.stdin.write(this.check(body));
     if (s.auto) this.keepCommands(s, body);
   }

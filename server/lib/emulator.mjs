@@ -159,30 +159,30 @@ export function detectEmulator(id, customPath) {
 
 /**
  * Download and install the latest release of an emulator into souldew's tools folder. Every failure is an httpError
- * with a code (web/lib/errors.mjs shows it in the player's language) – the German text is only the fallback.
+ * with a code (web/lib/errors.mjs shows it in the player's language) – the English text is only the fallback.
  */
 export async function installEmulator(id, { fetchImpl = fetch } = {}) {
   const emu = EMULATORS[id];
-  if (!emu) throw httpError(404, 'Unbekannter Emulator', 'unknownEmulator');
+  if (!emu) throw httpError(404, 'Unknown emulator', 'unknownEmulator');
   const vars = { emu: emu.name };
-  const offline = (e) => httpError(502, `GitHub nicht erreichbar: ${e.message}`, 'emuOffline', { ...vars, detail: String(e.cause?.code || e.message).slice(0, 200) });
+  const offline = (e) => httpError(502, `GitHub can’t be reached: ${e.message}`, 'emuOffline', { ...vars, detail: String(e.cause?.code || e.message).slice(0, 200) });
   let rel;
   try {
     const relRes = await fetchImpl(`https://api.github.com/repos/${emu.repo}/releases/latest`, { headers: { 'User-Agent': 'souldew' } });
-    if (!relRes.ok) throw httpError(502, `GitHub antwortete ${relRes.status} – später erneut versuchen`, 'emuGithub', { ...vars, status: relRes.status });
+    if (!relRes.ok) throw httpError(502, `GitHub answered ${relRes.status} – try again later`, 'emuGithub', { ...vars, status: relRes.status });
     rel = await relRes.json();
   } catch (e) {
     throw e.status ? e : offline(e);
   }
   const asset = pickAsset(rel.assets, id);
-  if (!asset) throw httpError(404, `Kein ${emu.name}-Download für ${process.platform} gefunden`, 'emuNoAsset', { ...vars, platform: PLATFORM_NAMES[process.platform] || process.platform });
+  if (!asset) throw httpError(404, `No ${emu.name} download for ${process.platform}`, 'emuNoAsset', { ...vars, platform: PLATFORM_NAMES[process.platform] || process.platform });
   let bytes;
   try {
     const res = await fetchImpl(asset.browser_download_url);
-    if (!res.ok) throw httpError(502, `Download fehlgeschlagen (${res.status})`, 'emuDownload', { ...vars, detail: `HTTP ${res.status}` });
+    if (!res.ok) throw httpError(502, `Download failed (${res.status})`, 'emuDownload', { ...vars, detail: `HTTP ${res.status}` });
     bytes = Buffer.from(await res.arrayBuffer()); // download fully before touching a working install
   } catch (e) {
-    throw e.status ? e : httpError(502, `Download fehlgeschlagen: ${e.message}`, 'emuDownload', { ...vars, detail: String(e.cause?.code || e.message).slice(0, 200) });
+    throw e.status ? e : httpError(502, `Download failed: ${e.message}`, 'emuDownload', { ...vars, detail: String(e.cause?.code || e.message).slice(0, 200) });
   }
   await installDownloaded(id, asset.name, bytes, dirFor(id));
   return { ...detectEmulator(id), version: rel.tag_name };
@@ -213,15 +213,15 @@ export async function installDownloaded(id, name, bytes, dir, { platform = proce
   const stage = `${dir}.new`;
   const old = `${dir}.old`;
   removeDir(old); // a swap that was cut short
-  if (!removeDir(stage)) throw httpError(409, `Der alte Download von ${emu.name} lässt sich nicht entfernen: ${stage}`, 'emuInUse', vars);
-  const unpackError = (detail) => httpError(500, `Entpacken fehlgeschlagen: ${detail}`, 'emuUnpack', { ...vars, detail: String(detail).slice(0, 300) });
+  if (!removeDir(stage)) throw httpError(409, `The old download of ${emu.name} can’t be removed: ${stage}`, 'emuInUse', vars);
+  const unpackError = (detail) => httpError(500, `Unpacking failed: ${detail}`, 'emuUnpack', { ...vars, detail: String(detail).slice(0, 300) });
   const file = join(stage, safeFileName(name));
   try {
     mkdirSync(stage, { recursive: true });
     writeFileSync(file, bytes);
   } catch (e) {
     removeDir(stage);
-    throw httpError(500, `Download konnte nicht gespeichert werden: ${e.message}`, 'emuWrite', { ...vars, detail: e.code || e.message });
+    throw httpError(500, `The download couldn’t be saved: ${e.message}`, 'emuWrite', { ...vars, detail: e.code || e.message });
   }
   let ok = true;
   if (platform !== 'darwin' && /\.(zip|7z)$/i.test(name)) {
@@ -267,7 +267,7 @@ export async function installDownloaded(id, name, bytes, dir, { platform = proce
       renameRetry(dir, old);
     } catch {
       removeDir(stage);
-      throw httpError(409, `${emu.name} läuft noch – schließe es und versuche es erneut`, 'emuInUse', vars);
+      throw httpError(409, `${emu.name} is still running – close it and try again`, 'emuInUse', vars);
     }
   }
   try {
@@ -275,7 +275,7 @@ export async function installDownloaded(id, name, bytes, dir, { platform = proce
   } catch (e) {
     if (existsSync(old) && !existsSync(dir)) renameRetry(old, dir); // put the working one back
     removeDir(stage);
-    throw httpError(500, `Installieren fehlgeschlagen: ${e.message}`, 'emuWrite', { ...vars, detail: e.code || e.message });
+    throw httpError(500, `Installing failed: ${e.message}`, 'emuWrite', { ...vars, detail: e.code || e.message });
   }
   removeDir(old);
   if (platform === 'darwin') {
@@ -287,7 +287,7 @@ export async function installDownloaded(id, name, bytes, dir, { platform = proce
 /** Resolves once the process has started; rejects if it can't be spawned (e.g. not executable). */
 export async function launchRom(id, romPath, { customPath, script } = {}) {
   const emu = detectEmulator(id, customPath);
-  if (!emu.installed) throw httpError(404, `${EMULATORS[id]?.name || id} ist nicht installiert`, 'emuNotInstalled', { emu: EMULATORS[id]?.name || id });
+  if (!emu.installed) throw httpError(404, `${EMULATORS[id]?.name || id} isn’t installed`, 'emuNotInstalled', { emu: EMULATORS[id]?.name || id });
   // A .cia isn't started from the file – Azahar installs it (File › Install CIA) and lists the game; open it empty.
   const args = romPath && !(id === 'azahar' && /\.z?cia$/i.test(romPath)) ? [romPath] : [];
   let child;
@@ -295,20 +295,20 @@ export async function launchRom(id, romPath, { customPath, script } = {}) {
   if (id === 'azahar') {
     // One Azahar at a time: a second one would find its RPC port taken (no live data), and on macOS `open -a` only
     // brings an open Azahar to the front without handing it the game.
-    if (emulatorRunning(/(?:^|[\\/"])azahar(?:\.exe)?(?:"|$)/im)) throw httpError(409, 'Azahar läuft schon – starte das Spiel dort oder schließe Azahar zuerst', 'emulatorOpen', { emu: 'Azahar' });
+    if (emulatorRunning(/(?:^|[\\/"])azahar(?:\.exe)?(?:"|$)/im)) throw httpError(409, 'Azahar is already open – start the game there, or close Azahar first', 'emulatorOpen', { emu: 'Azahar' });
   }
   if (process.platform === 'darwin' && /\.app$/i.test(exeName)) {
-    if (!EMULATORS[id].app.test(exeName)) throw httpError(400, 'Ungültiger Emulator-Pfad', 'badEmulatorPath');
+    if (!EMULATORS[id].app.test(exeName)) throw httpError(400, 'Invalid emulator path', 'badEmulatorPath');
     child = spawn('open', ['-a', emu.path, '--args', ...args], { detached: true, stdio: 'ignore' });
   } else {
-    if (!EMULATORS[id].exe.test(exeName)) throw httpError(400, 'Ungültiger Emulator-Pfad', 'badEmulatorPath');
+    if (!EMULATORS[id].exe.test(exeName)) throw httpError(400, 'Invalid emulator path', 'badEmulatorPath');
     // Windows: started from its own folder, so mGBA's portable.ini (settings next to the exe) and its DLLs are found
     child = spawn(emu.path, args, { detached: true, stdio: 'ignore', ...(process.platform === 'win32' ? { cwd: dirname(emu.path) } : {}) });
   }
   // An unhandled 'error' event on the child would crash the whole server.
   await new Promise((resolve, reject) => {
     child.once('spawn', resolve);
-    child.once('error', (e) => reject(httpError(500, `${EMULATORS[id]?.name || id} konnte nicht gestartet werden: ${e.message}`, 'emuLaunch', { emu: EMULATORS[id]?.name || id, detail: e.code || e.message })));
+    child.once('error', (e) => reject(httpError(500, `${EMULATORS[id]?.name || id} couldn’t be started: ${e.message}`, 'emuLaunch', { emu: EMULATORS[id]?.name || id, detail: e.code || e.message })));
   });
   child.unref();
   return { ...emu, script };

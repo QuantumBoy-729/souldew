@@ -51,7 +51,7 @@ test('the host\'s arguments: the core, the RAM the live reader needs, souldew\'s
   // GBA: EWRAM and IWRAM, as player.html maps them
   assert.deepEqual(hostArgs({ system: 'gba', core: 'c', rom: 'r', saveDir: 's', systemDir: 'y' }).filter((x, i, l) => l[i - 1] === '--ram'), ['0x2000000:0x40000', '0x3000000:0x8000']);
   assert.ok(!hostArgs({ system: 'gb', core: 'c', rom: 'r', saveDir: 's', systemDir: 'y' }).includes('--sram')); // no save: none given
-  assert.throws(() => hostArgs({ system: '3ds', core: 'c', rom: 'r', saveDir: 's', systemDir: 'y' }), /nativer Kern/);
+  assert.throws(() => hostArgs({ system: '3ds', core: 'c', rom: 'r', saveDir: 's', systemDir: 'y' }), { code: 'nativeSystem' });
   // every core has its own id for save states (a browser-emulator state can't be loaded here)
   assert.equal(new Set(Object.values(NATIVE_CORES).map((c) => c.id)).size, 3);
 });
@@ -70,7 +70,7 @@ test('the commands a page may send: known types, sane sizes, nothing left over',
     Buffer.concat([command(NCMD.RESET), Buffer.from([1, 2, 3])]), // a cut-off message after it
     Buffer.alloc(0),
   ];
-  for (const b of bad) assert.throws(() => checkNativeCommands(b), (e) => e.code === 'badCommand' || /Befehl/.test(e.message));
+  for (const b of bad) assert.throws(() => checkNativeCommands(b), (e) => e.code === 'badCommand');
 });
 
 /** A stand-in host: records how it was started and what it was sent. */
@@ -98,16 +98,16 @@ test('a session: the battery save goes to the host as a file, commands are check
   assert.equal(sram, join(nativeSaveDir('solo-red'), 'boot.sav'));
   assert.deepEqual([...readFileSync(sram)], [1, 2, 3, 4]);
   s.send(id, command(NCMD.RESET));
-  assert.throws(() => s.send(id, command(77)), /Befehl/);
-  assert.throws(() => s.send('nope', command(NCMD.RESET)), /Keine laufende Sitzung/);
+  assert.throws(() => s.send(id, command(77)), { code: 'badCommand' });
+  assert.throws(() => s.send('nope', command(NCMD.RESET)), { code: 'noNativeSession' });
   // no save the next time: the old one doesn't come back
   s.startNative({ rom: '/r/red.gb', key: 'solo-red', system: 'gb', tools, save: null });
   assert.ok(!calls[1].args.includes('--sram'));
   assert.equal(existsSync(sram), false);
   // the first host was told to quit
   assert.ok(Buffer.concat(calls[0].child.sent).includes(command(NCMD.QUIT)));
-  assert.throws(() => s.startNative({ rom: 'r', key: 'k', system: 'nds', tools }), /fehlt/);
-  assert.throws(() => s.startNative({ rom: 'r', key: 'k', system: 'gb', tools, save: Buffer.alloc(5 * 1024 * 1024) }), /zu groß/);
+  assert.throws(() => s.startNative({ rom: 'r', key: 'k', system: 'nds', tools }), { code: 'nativeMissing' });
+  assert.throws(() => s.startNative({ rom: 'r', key: 'k', system: 'gb', tools, save: Buffer.alloc(5 * 1024 * 1024) }), { code: 'saveTooLarge' });
   // the battery save is kept for a page that connects late, like events and save states
   assert.ok(s.keepTypes.includes(9));
   s.stop();

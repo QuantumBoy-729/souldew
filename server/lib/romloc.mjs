@@ -11,7 +11,7 @@ import { join, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
 import zlib from 'node:zlib';
-import { romLocations, gen3MapTable, gen3RamMoved } from '../../shared/live/romloc.mjs';
+import { romLocations, gen3MapTable, gen3MapHeaders, gen3RamMoved, gbMapHeaders } from '../../shared/live/romloc.mjs';
 import { romSpecies, gen3ItemNames, gen3MoveNames, gen3MoveMap } from '../../shared/live/romspecies.mjs';
 import { romTypes } from '../../shared/live/romtypes.mjs';
 import { romCaps } from '../../shared/live/romcaps.mjs';
@@ -24,7 +24,7 @@ import { isCtrExt } from '../../shared/romid.mjs';
 import { identifyCtr } from '../../shared/ctr.mjs';
 import { ctrZonePlaces } from '../../shared/live/ctrzones.mjs';
 
-const VERSION = 16; // bump when romData() / ctrData() change what they find or the shape of the result (13: types and level caps from the ROM, 14: 3DS zone tables, 15: their header, 16: Gen 3 hacks with moved RAM, badge flags by the leaders' order)
+const VERSION = 21; // bump when romData() / ctrData() change what they find or the shape of the result (13: types and level caps from the ROM, 14: 3DS zone tables, 15: their header, 16: Gen 3 hacks with moved RAM, badge flags by the leaders' order, 17: Black/White zone headers, 18: catch rates with the types, the Game Boy enemy's status / catch rate / battle type moved with a hack's RAM, 19: the Game Boy map headers, Gen 3 map headers, Black 2/White 2 zone headers – the place sign checks the game's copy of the current map's header against them, 20: Yellow's map headers (249 maps) and its memory table entry found from its ROM header, 21: Gen 5 forms' types)
 const memo = new Map();
 let tables = null;
 
@@ -53,7 +53,7 @@ export function romCrc(bytes) {
   return (v >>> 0).toString(16).toUpperCase().padStart(8, '0');
 }
 
-/** All results for a ROM's bytes: { data (locations or null), species, wram, types, caps, capsWhy, items, moves, vanilla }. */
+/** All results for a ROM's bytes: { data (locations or null), species, wram, gbMaps, types, caps, capsWhy, items, moves, vanilla }. */
 export function romData(u8, sharedDir) {
   const o = opts(sharedDir);
   let vanilla = false;
@@ -74,6 +74,8 @@ export function romData(u8, sharedDir) {
     const entry = h?.system === 'gba' ? findEntry(o.addresses, { platform: 'gba', code: h.code, title: h.title }) : null;
     if (entry?.gen === 3 && gen3RamMoved(u8, entry)) data.maps3 = { ...gen3MapTable(u8), moved: true };
   }
+  // a retail engine's gMapHeader is checked against the ROM's own map headers (shared/live/location.mjs readGen3)
+  if (data?.gen === 3 && !data.maps3) data.headers3 = gen3MapHeaders(u8);
   // an expanded engine numbers its items and moves its own way (Complete FireRed Upgrade: Unbound, Radical Red): the
   // game's item names (held items by name) and its moves in the app's numbering (the battle helper's moves)
   const own = species?.engine === 'expanded' ? ownTables3(u8, o) : { items: null, moves: null };
@@ -86,7 +88,24 @@ export function romData(u8, sharedDir) {
   // the header (system, game code, title): which memory table entry reads it (shared/live/features.mjs)
   const h = identifyRom(u8.subarray(0, 0x200));
   const header = h?.system ? { system: h.system, code: h.code || '', title: h.title || '' } : null;
-  return { data, species, wram: vanilla ? null : gbShift(u8, o), types, caps, capsWhy: caps ? null : c.why || null, ...own, header, vanilla };
+  return { data, species, wram: vanilla ? null : gbShift(u8, o), gbMaps: gbMaps(u8, o), types, caps, capsWhy: caps ? null : c.why || null, ...own, header, vanilla };
+}
+
+/**
+ * Game Boy games: the ROM's map headers, which the live reader finds the game's copy of the current map's header by
+ * (shared/live/romloc.mjs gbMapHeaders, shared/live/location.mjs readGen1/readGen2) – in every language.
+ */
+function gbMaps(u8, o) {
+  // (on its own: whatever goes wrong here costs the place sign its check, never the rest of the ROM's data)
+  try {
+    const h = identifyRom(u8.subarray(0, 0x200));
+    if (!h || (h.system !== 'gb' && h.system !== 'gbc')) return null;
+    const entry = findEntry(o.addresses, { platform: h.system, code: h.code, title: h.title });
+    const m = entry ? o.maps.games?.[entry.id] : null;
+    return m ? gbMapHeaders(u8, m.gen, o.maps.tables?.[`gen${m.gen}`]?.[m.table]) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -144,7 +163,7 @@ export function ctrData(file) {
 export const isCtrFile = (file) => Boolean(file) && isCtrExt(extname(file).slice(1));
 
 /** What romDataFor finds when there's nothing to find – also the list of fields the disk cache must give back. */
-export const ROMDATA_NONE = Object.freeze({ data: null, species: null, wram: null, types: null, caps: null, capsWhy: null, items: null, moves: null, header: null, vanilla: null });
+export const ROMDATA_NONE = Object.freeze({ data: null, species: null, wram: null, gbMaps: null, types: null, caps: null, capsWhy: null, items: null, moves: null, header: null, vanilla: null });
 /** A disk-cache entry back into romDataFor's result (every field of ROMDATA_NONE – a missing one would be lost on the
  * next start, as the own types of Too Many Types were). */
 export const fromRomCache = (v) => Object.fromEntries(Object.keys(ROMDATA_NONE).map((k) => [k, v[k] ?? null]));

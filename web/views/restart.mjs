@@ -3,7 +3,7 @@
 // players; a solo Nuzlocke has nobody to tell.
 import { html, useState, useEffect } from '/vendor/htm-preact.mjs';
 import { useApp, Modal, Sprite, Led } from '../lib/ui.mjs';
-import { counts, players as getPlayers, live, resumeRun, runMode, slotsOf, runStats } from '../lib/run.mjs';
+import { counts, players as getPlayers, live, resumeRun, runMode, slotsOf, runStats, lives as getLives } from '../lib/run.mjs';
 import { speciesName } from '../lib/data.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t } from '../lib/i18n.mjs';
@@ -175,6 +175,13 @@ export function RestartOffer({ offer, onClose }) {
   <//>`;
 }
 
+/** The run ran out of lives (the lives rule): the last shared life, or one player's own last one. */
+function livesOverText(doc, manifest, status, me, who) {
+  if (runMode(manifest) === 'nuzlocke') return t('over.livesSolo', 'The last life is gone – the Nuzlocke is over.');
+  if (getLives(doc, manifest)?.pool !== 'player') return t('over.livesShared', 'The last life is gone – the run is over for everyone.');
+  return status.by === me ? t('over.livesMine', 'You have no lives left – the run is over for everyone.') : t('over.livesOther', '{name} has no lives left – the run is over for everyone.', { name: who });
+}
+
 /**
  * The run just ended (a team wiped – in a Nuzlocke a blackout or a death in a deathless run –, or someone marked
  * it failed / won): a notice for every player with the next steps – a new attempt, the board, or (if it was a
@@ -196,6 +203,7 @@ export function RunOverNotice({ status, onClose }) {
   const text = won ? (solo ? t('over.wonTextSolo', 'Champion beaten – congratulations, you made it!')
     : n > 2 ? t('over.wonTextGroup', 'Champion beaten – congratulations to all of you!') : t('over.wonText', 'Champion beaten – congratulations to both of you!'))
     : !status.auto ? (status.by === me ? t('over.failedMine', 'You ended the run as failed.') : t('over.failedText', '{name} ended the run as failed.', { name: who }))
+      : status.reason === 'lives' ? livesOverText(doc, manifest, status, me, who)
       : solo ? (status.reason === 'deathless' ? t('over.deathlessSolo', 'A Pokémon died – in a deathless run that ends the Nuzlocke.')
         : t('over.blackoutSolo', 'Your team blacked out – the Nuzlocke is over.'))
         : status.by === me ? (n > 2 ? t('over.wipedMineGroup', 'Your team blacked out – the run is over for everyone.') : t('over.wipedMine', 'Your whole team is down – the SoulLink is over.'))

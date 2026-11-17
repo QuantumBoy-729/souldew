@@ -10,6 +10,7 @@ import { writeFileAtomic } from '../server/lib/fsutil.mjs';
 import { grantPicked } from '../server/lib/grants.mjs';
 import { chromiumSwitches, startDecision, crashDecision, gpuInfoSummary, safeGraphicsRequested, withoutSafeGraphics } from '../shared/gpu.mjs';
 import { sameOrigin, safeExternalUrl, subframeNavigationAllowed, permissionAllowed, isTrustedIpcSender, titleBarColors, initialWindowSize } from './guards.mjs';
+import { appLang, textsFor } from './texts.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const MAC = process.platform === 'darwin';
@@ -58,6 +59,13 @@ function readConfig() {
   } catch {
     return {};
   }
+}
+/** t(key, english) in the app language (electron/texts.mjs) – after `ready` (the system language comes from Electron). */
+const dictionaries = new Map();
+function mainTexts() {
+  const lang = appLang(readConfig().lang, app.getLocale());
+  if (!dictionaries.has(lang)) dictionaries.set(lang, textsFor(lang, join(here, '..', 'web', 'i18n')));
+  return dictionaries.get(lang);
 }
 function patchConfig(patch) {
   if (!patch) return;
@@ -280,16 +288,18 @@ ipcMain.on('titlebar-colors', (e, colors) => {
 });
 
 /**
- * labels: the page's texts in the app language (see 'menu-labels'); German until the page has sent them.
+ * labels: the page's texts in the app language (see 'menu-labels'); until the page has sent them the same texts from
+ * its dictionaries (mainTexts).
  * macOS gets the usual app menu; Windows has no visible menu bar (titleBarOverlay), so there the menu only carries
  * the keyboard shortcuts (Ctrl instead of ⌘, F11 for fullscreen) – Settings and Quit move into "File". Linux: the same
  * menu as Windows, hidden until Alt is pressed (autoHideMenuBar).
  */
 function buildMenu(labels = {}) {
   const l = (key, fallback) => (typeof labels[key] === 'string' && labels[key] ? labels[key].slice(0, 80) : fallback);
+  const t = mainTexts();
   const nav = (route) => () => send('navigate', route);
   const emu = (action) => () => send('emu', action);
-  const settings = { label: l('settings', 'Einstellungen …'), accelerator: 'CmdOrCtrl+,', click: nav('settings') };
+  const settings = { label: l('settings', t('menu.settings', 'Settings …')), accelerator: 'CmdOrCtrl+,', click: nav('settings') };
   const template = [
     ...(MAC ? [{
       label: 'souldew',
@@ -304,48 +314,49 @@ function buildMenu(labels = {}) {
       ],
     }] : []),
     {
-      label: l('file', 'Ablage'),
+      label: l('file', t('menu.file', 'File')),
       submenu: [
-        { label: l('addGames', 'Spiele hinzufügen …'), accelerator: 'CmdOrCtrl+O', click: () => send('menu', 'add-games') },
-        { label: l('revealLibrary', MAC ? 'Bibliotheksordner im Finder' : WIN ? 'Bibliotheksordner im Explorer' : 'Bibliotheksordner im Dateimanager'), click: () => send('menu', 'reveal-library') },
+        { label: l('addGames', t('menu.addGames', 'Add games …')), accelerator: 'CmdOrCtrl+O', click: () => send('menu', 'add-games') },
+        { label: l('revealLibrary', MAC ? t('menu.revealLibrary', 'Show library folder in Finder') : WIN ? t('menu.revealLibraryWin', 'Show library folder in Explorer')
+          : t('menu.revealLibraryLinux', 'Show library folder in the file manager')), click: () => send('menu', 'reveal-library') },
         { type: 'separator' },
         // Windows: no Ctrl+W – it would close the window and with it the app; Alt+F4 does that the Windows way
-        ...(MAC ? [{ role: 'close' }] : [settings, { type: 'separator' }, { role: 'quit', label: l('quit', 'Beenden') }]),
+        ...(MAC ? [{ role: 'close' }] : [settings, { type: 'separator' }, { role: 'quit', label: l('quit', t('menu.quit', 'Quit')) }]),
       ],
     },
     { role: 'editMenu' },
     {
-      label: l('go', 'Gehe zu'),
+      label: l('go', t('menu.go', 'Go')),
       submenu: [
-        { label: l('library', 'Bibliothek'), accelerator: 'CmdOrCtrl+1', click: nav('library') },
-        { label: l('soullink', 'SoulLink'), accelerator: 'CmdOrCtrl+2', click: nav('soullink') },
-        { label: l('nuzlocke', 'Nuzlocke'), accelerator: 'CmdOrCtrl+3', click: nav('nuzlocke') },
-        { label: l('link', 'Verbindung'), accelerator: 'CmdOrCtrl+4', click: nav('link') },
-        { label: l('stream', 'Stream'), accelerator: 'CmdOrCtrl+5', click: nav('stream') },
+        { label: l('library', t('nav.library', 'Library')), accelerator: 'CmdOrCtrl+1', click: nav('library') },
+        { label: l('soullink', t('nav.soullink', 'SoulLink')), accelerator: 'CmdOrCtrl+2', click: nav('soullink') },
+        { label: l('nuzlocke', t('nav.nuzlocke', 'Nuzlocke')), accelerator: 'CmdOrCtrl+3', click: nav('nuzlocke') },
+        { label: l('link', t('nav.link', 'Connection')), accelerator: 'CmdOrCtrl+4', click: nav('link') },
+        { label: l('stream', t('nav.stream', 'Stream')), accelerator: 'CmdOrCtrl+5', click: nav('stream') },
       ],
     },
     {
-      label: l('emulator', 'Emulator'),
+      label: l('emulator', t('menu.emulator', 'Emulator')),
       submenu: [
-        { label: l('pause', 'Pause / Weiter'), accelerator: 'P', registerAccelerator: false, click: emu('pause') },
-        { label: l('turbo', 'Turbo umschalten'), accelerator: 'T', registerAccelerator: false, click: emu('turbo') },
-        { label: l('faster', 'Schneller'), accelerator: 'CmdOrCtrl+Plus', click: emu('faster') },
-        { label: l('slower', 'Langsamer'), accelerator: 'CmdOrCtrl+-', click: emu('slower') },
+        { label: l('pause', t('keys.pause', 'Pause / resume')), accelerator: 'P', registerAccelerator: false, click: emu('pause') },
+        { label: l('turbo', t('menu.turbo', 'Toggle turbo')), accelerator: 'T', registerAccelerator: false, click: emu('turbo') },
+        { label: l('faster', t('menu.faster', 'Faster')), accelerator: 'CmdOrCtrl+Plus', click: emu('faster') },
+        { label: l('slower', t('menu.slower', 'Slower')), accelerator: 'CmdOrCtrl+-', click: emu('slower') },
         { type: 'separator' },
-        { label: l('quicksave', 'Schnellspeichern'), accelerator: 'F5', registerAccelerator: false, click: emu('quicksave') },
-        { label: l('quickload', 'Schnellladen'), accelerator: 'F8', registerAccelerator: false, click: emu('quickload') },
-        { label: l('screenshot', 'Screenshot'), accelerator: 'F12', registerAccelerator: false, click: emu('screenshot') },
-        { label: l('mute', 'Ton an/aus'), accelerator: 'M', registerAccelerator: false, click: emu('mute') },
+        { label: l('quicksave', t('menu.quicksave', 'Quick save')), accelerator: 'F5', registerAccelerator: false, click: emu('quicksave') },
+        { label: l('quickload', t('menu.quickload', 'Quick load')), accelerator: 'F8', registerAccelerator: false, click: emu('quickload') },
+        { label: l('screenshot', t('keys.screenshot', 'Screenshot')), accelerator: 'F12', registerAccelerator: false, click: emu('screenshot') },
+        { label: l('mute', t('keys.mute', 'Sound on/off')), accelerator: 'M', registerAccelerator: false, click: emu('mute') },
         { type: 'separator' },
-        { label: l('fullscreen', 'Vollbild'), accelerator: MAC ? 'Ctrl+Cmd+F' : 'F11', role: 'togglefullscreen' },
+        { label: l('fullscreen', t('menu.fullscreen', 'Fullscreen')), accelerator: MAC ? 'Ctrl+Cmd+F' : 'F11', role: 'togglefullscreen' },
       ],
     },
     ...(MAC ? [{ role: 'windowMenu' }] : []),
     {
       role: 'help',
       submenu: [
-        { label: l('shortcuts', 'Tastenkürzel'), accelerator: 'CmdOrCtrl+/', click: () => send('menu', 'shortcuts') },
-        { label: l('guide', 'Anleitung'), click: nav('guide') },
+        { label: l('shortcuts', t('menu.shortcuts', 'Keyboard shortcuts')), accelerator: 'CmdOrCtrl+/', click: () => send('menu', 'shortcuts') },
+        { label: l('guide', t('menu.guide', 'Guide')), click: nav('guide') },
         ...(app.isPackaged ? [] : [{ type: 'separator' }, { role: 'toggleDevTools' }, { role: 'reload' }]),
       ],
     },
@@ -355,11 +366,12 @@ function buildMenu(labels = {}) {
 
 handle('pick-files', async (e, opts) => {
   if (!opts || typeof opts !== 'object') opts = {};
+  const t = mainTexts();
   const r = await dialog.showOpenDialog(win, {
-    title: typeof opts.title === 'string' && opts.title ? opts.title.slice(0, 200) : 'Spiele hinzufügen',
+    title: typeof opts.title === 'string' && opts.title ? opts.title.slice(0, 200) : t('lib.addTitle', 'Add games to souldew'),
     properties: opts.folder ? ['openDirectory'] : ['openFile', 'multiSelections'],
     filters: opts.folder ? undefined : [
-      { name: 'ROMs, Patches & Archive', extensions: ['gb', 'gbc', 'gba', 'nds', '3ds', 'cci', 'cxi', 'cia', '3dsx', 'zcci', 'zcxi', 'z3dsx', 'zip', 'xdelta', 'vcdiff', 'bps', 'ups', 'ips', 'json'] },
+      { name: t('dialog.fileTypes', 'ROMs, patches & archives'), extensions: ['gb', 'gbc', 'sgb', 'gba', 'nds', '3ds', 'cci', 'cxi', 'cia', '3dsx', 'zcci', 'zcxi', 'z3dsx', 'zip', 'xdelta', 'vcdiff', 'bps', 'ups', 'ips', 'json'] },
     ],
   });
   if (r.canceled) return [];
@@ -459,7 +471,8 @@ app.whenReady().then(async () => {
     await boot();
   } catch (e) {
     gpuStartOk(); // not the graphics backend's fault – it doesn't count as a failed start
-    dialog.showErrorBox('souldew konnte nicht starten', String(e?.stack || e));
+    const t = mainTexts();
+    dialog.showErrorBox(t('app.startFailed', 'souldew couldn’t start'), String(e?.stack || e));
     app.quit();
   }
 });

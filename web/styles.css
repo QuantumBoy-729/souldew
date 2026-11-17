@@ -186,6 +186,10 @@ img.pixel, .sprite img { image-rendering: pixelated; }
 .btn:active { transform: translateY(2px); box-shadow: 0 0 0 #000, inset 0 1px 2px #0006; }
 .btn[disabled] { opacity: 0.4; cursor: not-allowed; transform: none; }
 .btn svg { width: 16px; height: 16px; }
+/* an icon next to a label: the pixel icons' ink sits 1 px above the label's cap-height centre (measured on 2× screenshots,
+   e.g. "Save diagnostics", "Report a bug") – lowered so both share one centre line. Icon-only buttons (.icon, or a
+   button named by aria-label) stay centred in their circle. */
+.btn:not(.icon):not([aria-label]) > svg { position: relative; top: 1px; }
 .btn.primary { background: var(--ink); color: #1b1a1f; font-weight: 600; }
 .btn.primary:hover { background: #fff8ea; }
 .btn.go { background: #3f6b5d; color: #f0fbf6; }

@@ -135,6 +135,29 @@ test('HGSS level cap follows the Kanto badges: E4 implied after badge 9, Blue at
   assert.equal(levelCapFor(8, { will: 1, koga: 1, bruno: 1, karen: 1, lance: 1 }).boss.key, 'kanto-leaders');
 });
 
+test('HGSS level caps: Falkner\'s ace is Pidgeotto Lv. 13, and marking him defeated moves the cap on to Bugsy – solo and in a 3-player SoulLink (2.8.1)', () => {
+  // vanilla HeartGold/SoulSilver (PokémonDB, Serebii): Falkner Pidgey 9 / Pidgeotto 13, Bugsy Scyther 17
+  assert.deepEqual([levelCapFor(0, {}, true).boss.key, levelCapFor(0, {}, true).cap], ['falkner', 13]);
+  assert.deepEqual([levelCapFor(1, {}, true).boss.key, levelCapFor(1, {}, true).cap], ['bugsy', 17], 'the badge moves it on');
+  assert.deepEqual([levelCapFor(0, { falkner: { at: 1 } }, true).boss.key, levelCapFor(0, { falkner: { at: 1 } }, true).cap], ['bugsy', 17], 'so does marking him defeated');
+  assert.equal(levelCapFor(0, { falkner: 1, bugsy: 1 }, true).boss.key, 'whitney');
+  assert.equal(levelCapFor(2, { falkner: 1 }, true).boss.key, 'whitney', 'badges and marks together');
+  assert.equal(levelCapFor(0, {}, false).cap, 15, 'Definitive HeartGold keeps its own caps');
+  // the board's list shows the vanilla caps
+  const d = mkDoc();
+  assert.equal(R.progression(d, HG).find((x) => x.key === 'falkner').cap, 13);
+  assert.equal(R.progression(d, HG).find((x) => x.key === 'rival-2').cap, 18);
+  // a 3-player SoulLink: every player's cap from their own badges, the boss marks shared
+  const HG3 = { ...HG, mode: 'soullink', players: { p1: { name: 'A' }, p2: { name: 'B' }, p3: { name: 'C' } } };
+  for (const s of ['p1', 'p2', 'p3']) d.set(`live:${s}`, { badges: 0, at: Date.now() });
+  assert.deepEqual(['p1', 'p2', 'p3'].map((s) => R.levelCap(d, HG3, s).cap), [13, 13, 13]);
+  d.set('boss:falkner', { at: Date.now(), by: 'p3' });
+  assert.deepEqual(['p1', 'p2', 'p3'].map((s) => R.levelCap(d, HG3, s).boss.key), ['bugsy', 'bugsy', 'bugsy']);
+  assert.equal(R.levelCap(d, HG3, 'p3').cap, 17);
+  d.set('live:p2', { badges: 2, at: Date.now() });
+  assert.equal(R.levelCap(d, HG3, 'p2').boss.key, 'whitney');
+});
+
 // ---------------------------------------------------------------------------
 // Gen 2 RAM
 
@@ -167,7 +190,7 @@ test('Gen 2: the previous battle\'s enemy is not shown (or flashed) during the n
   assert.equal(readLiveBattle(SILVER, read, T, state).enemy, null);
   // now loaded
   m[0xd0ef] = 16; m[0xd0fc] = 3; put16be(m, 0xd0ff, 12); put16be(m, 0xd101, 12); put16be(m, 0xd0f5, 0x1234);
-  assert.deepEqual(readLiveBattle(SILVER, read, T, state).enemy, { species: 16, level: 3, hp: 12, maxHp: 12, shiny: false });
+  assert.deepEqual(readLiveBattle(SILVER, read, T, state).enemy, { species: 16, level: 3, hp: 12, maxHp: 12, shiny: false, status: 0 }); // (wEnemyMonStatus: none)
 });
 
 test('Gen 2: a stale fainted wBattleMon is not folded onto the mon now at that index', () => {
@@ -530,7 +553,7 @@ test('HGSS: the opponent comes from the battle structs, not from a party copy in
   flag(0x2100);
   sendOutAll(w, [{ ...P[0], level: 10 }, { species: 300, level: 2, hp: 14, maxHp: 14, pid: 0xbbbb0001 }]);
   const { fight, party } = poll(read, state, 3);
-  assert.deepEqual(fight.enemy, { species: 300, level: 2, hp: 14, maxHp: 14, shiny: false, moves: [33] });
+  assert.deepEqual(fight.enemy, { species: 300, level: 2, hp: 14, maxHp: 14, shiny: false, moves: [33], status: 0 }); // (BattleMon.status: none)
   assert.equal(fight.kind, 'wild', 'a wild Pokémon carries the player’s ID');
   assert.deepEqual(fight.active, { index: 0, hp: 20, maxHp: 20, status: 0 });
   // a hit shows at once, on both sides

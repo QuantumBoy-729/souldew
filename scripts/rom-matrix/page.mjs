@@ -84,7 +84,7 @@ function helper() {
   function place() {
     const { location, maps, entry, rom, state, tables } = ctx;
     if (ctx.hack) return null;
-    const r = location.readLocation(maps, entry, e.read, { rom, state });
+    const r = location.readLocation(maps, entry, e.read, { rom, state, gbMaps: ctx.romloc?.gbMaps || null });
     if (!r) return null;
     const table = location.locationLabel(r.gen, r.id, tables, 'en');
     const shown = location.placeName ? location.placeName(r, { rom, table, lang: 'en' }) : (rom?.lang === 'en' && r.romName) || table || r.romName;
@@ -114,7 +114,7 @@ function helper() {
       party: parse.withBattleHp(res.party, fight).map((m) => ({ species: m.species, name: name(m.species), nickname: m.nickname, level: m.level, hp: m.hp, maxHp: m.maxHp, status: m.status, metLocation: m.metLocation ?? null, metLevel: m.metLevel ?? null, isEgg: !!m.isEgg, key: m.key, item: m.item || 0, ...(m.itemName ? { itemName: m.itemName } : {}), itemLabel: m.item ? (m.itemOwn ? m.itemName || '' : ctx.data?.itemName?.(m.item, entry.gen) || '') : '', moves: m.moves || [] })),
       boxes: Array.isArray(res.boxes) ? res.boxes.length : null,
       badges: res.badges ?? null,
-      battle: fight ? { kind: fight.kind, enemy: fight.enemy ? { species: fight.enemy.species, name: name(fight.enemy.species), level: fight.enemy.level, hp: fight.enemy.hp, maxHp: fight.enemy.maxHp, moves: fight.enemy.moves || [], ...(fight.enemy.types ? { types: fight.enemy.types } : {}) } : null, active: fight.active || null } : null,
+      battle: fight ? { kind: fight.kind, enemy: fight.enemy ? { species: fight.enemy.species, name: name(fight.enemy.species), level: fight.enemy.level, hp: fight.enemy.hp, maxHp: fight.enemy.maxHp, moves: fight.enemy.moves || [], ...(fight.enemy.types ? { types: fight.enemy.types } : {}), ...(fight.enemy.status !== undefined ? { status: fight.enemy.status } : {}), ...(fight.enemy.catchRate ? { catchRate: fight.enemy.catchRate } : {}) } : null, active: fight.active || null, ...(fight.balls ? { balls: fight.balls } : {}) } : null,
     };
   }
 

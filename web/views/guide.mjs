@@ -3,11 +3,18 @@ import { useApp, saveDiagnostics, openExternal } from '../lib/ui.mjs';
 import { Icon } from '../lib/icons.mjs';
 import { t, currentLang } from '../lib/i18n.mjs';
 import { LINKS } from '../lib/links.mjs';
-import { resolve as resolveControls, keyLabel } from '../lib/controls.mjs';
+import { resolve as resolveControls, resolveHotkeys, keyLabel } from '../lib/controls.mjs';
 import { shortcut } from '../lib/platform.mjs';
 
-export const SHORTCUTS = () => [
-  ['Tab', t('keys.turboHold', 'Hold for fast forward')],
+/** A key binding for display, with its Shift if it has one: "Tab", "⇧ Tab" on a Mac, "Shift+Tab" elsewhere. */
+export const comboLabel = (b) => (!b ? '–' : b.shift ? shortcut('Shift+K', { space: true }).replace(/K$/, keyLabel(b)) : keyLabel(b));
+
+/** controls: config.controls – the fast-forward keys may be re-bound (Settings › Controls). */
+export const SHORTCUTS = (controls = null) => [
+  ...(({ ffHold, ffToggle }) => [
+    ...(ffHold ? [[comboLabel(ffHold), t('keys.turboHold', 'Hold for fast forward')]] : []),
+    ...(ffToggle ? [[comboLabel(ffToggle), t('ctl.ffToggle', 'Fast-forward on / off')]] : []),
+  ])(resolveHotkeys(controls)),
   ['T', t('keys.turboToggle', 'Toggle turbo (2× → 3× → 4×)')],
   ['P', t('keys.pause', 'Pause / resume')],
   ['F5', t('keys.quicksaveSel', 'Quick save state (selected slot)')],
@@ -66,7 +73,7 @@ export function ConnectionText({ group = false } = {}) {
 }
 
 export function GuideView() {
-  const { route } = useApp();
+  const { route, status } = useApp();
   const [tab, setTab] = useState(route.params.tab || 'start');
   return html`<div class="stack-l">
     <div class="topbar"><h1>${t('guide.title', 'Help')}</h1></div>
@@ -85,7 +92,7 @@ export function GuideView() {
     </section>`}
     ${tab === 'keys' && html`<div class="grid-2">
       <section class="panel stack"><h2>${t('guide.shortcuts', 'Shortcuts while playing')}</h2>
-        <div class="keys">${SHORTCUTS().map(([k, l]) => html`<span class="kbd">${k}</span><span>${l}</span>`)}</div></section>
+        <div class="keys">${SHORTCUTS(status?.config?.controls).map(([k, l]) => html`<span class="kbd">${k}</span><span>${l}</span>`)}</div></section>
       <section class="panel stack"><h2>${t('guide.controls', 'Game controls')}</h2><${ControlsTable} />
         <p class="small faint">${t('guide.gamepad', 'Game controllers work too – just plug them in.')} ${t('guide.changeKeys', 'You can change the keys in Settings › Controls.')}</p></section>
     </div>`}

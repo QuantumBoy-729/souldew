@@ -433,3 +433,30 @@ PKHeX's lists), the bag can't be empty, and when the pointer table is there it m
 The 3DS host writes through the core's FCRAM block (the stack page in the libretro memory map points into it; the page
 is found by content and only kept where the change shows at the game's address – `native/ctr-host/ctrhost.c`
 `mem_write`), only inside the heaps and only while the bytes are still what souldew read.
+
+---
+
+## 8. The place sign: copies of ROM data in RAM (2.8.0)
+
+Every generation keeps a copy of the current map's header in RAM, made from the ROM's own bytes – so the copy can be
+checked against the ROM (and found again) in any language, where a fixed address is only verified for the build it
+comes from. `shared/live/location.mjs` reads the place from these copies; `server/lib/romloc.mjs` hands over the ROM's
+side (cache VERSION 19).
+
+| Game | Copy in RAM | ROM side | Source / check |
+|---|---|---|---|
+| Red/Blue | `wCurMapHeader` `0xD367` (10 bytes: tileset, height, width, blocks/text/script pointers, connections), `wCurMap` 9 bytes before | MapHeaderPointers `00:01AE` + MapHeaderBanks `03:423D` | [sym] `pokered.sym:19176`; `home/overworld.asm` LoadMapHeader copies `wCurMapHeaderEnd − wCurMapHeader` bytes. Live: Red US, 2026-11-16 |
+| Yellow | `0xD366`, `wCurMap` `0xD35D` | `3F:41F2` / `3F:43E4` | [sym] `pokeyellow.sym:22393` (not run live) |
+| Gold/Silver | `wMapPartial` `0xD081` + `wMapAttributes` (5 + 12 bytes) | MapGroupPointers `25:40ED`, 9-byte map headers, 12-byte attributes | [sym] `pokegold.sym:41357`, `pokesilver.sym:41356`; `home/map.asm` CopyMapPartial / CopyMapAttributes. Live: Silver |
+| Crystal | `0xD198` + attributes | `25:4000` | [sym] `pokecrystal.sym:55845` (= pokecrystal11). Live: Crystal US; Crystal Legacy keeps it 11 bytes further (romwram shift) |
+| Gen 3 | `gMapHeader` (struct MapHeader) | gMapGroups: events pointer (+0x04) and section (+0x14) per map – not the layout pointer, which LoadCurrentMapData replaces with the save's layout (Trick House, Battle Pyramid) | `pokeemerald src/overworld.c` LoadCurrentMapData. Emerald: 518 maps, 11 events pointers shared, never across sections |
+| Gen 4 | – (the map id lives in the save data) | – | the save data must be the party reader's, or hold a trainer: PKHeX Trainer1 (name 1–7 chars + 0xFFFF, money ≤ 999,999, gender 0/1) at SaveData + 0x74 (HGSS) / 0x7C (Pt) / 0x278 (DP). Live: Pearl, Platinum (the name, TID/SID, 3000 money, language 2 at +0x19) |
+| Black/White | zone header copy (48 bytes, own id +0x16, parent +0x18, id again +0x30) | a/0/1/2 file 0 | 2.7.5 |
+| Black 2/White 2 | main pointer + `0x41B2C` (48 bytes; parent at +0x18, name at +0x1A, the zone id after it at +0x30 – the header holds no own id) | a/0/1/2 file 0 | NDS-Ironmon-Tracker parentMapHeader `0x41B44` = +0x18, childMapHeader `0x41B5C` = +0x30. Live: Black 2 and White 2 US, 2026-11-16 (room 428 → parent 427 Aspertia City, 435, 438, 437). At power-on the pointer is already set and the copy zeroed: zone 0, Black City – what the old reader showed |
+
+Where the copy isn't at the fixed address, it is searched for (Game Boy: 8 KB WRAM, ≤ 1 ms, every 2 s at most; DS: 4 MB
+main RAM, ~20–25 ms, every 3 s, after four searches without a hit every 30 s – as Black/White's since the 2.7.5
+review), only a single copy counts, and its address is remembered in the live reader's state and re-checked (a few
+bytes) at every poll. Black 2/White 2 also take over the rest of the Black/White hardening: a remembered copy keeps
+the place for a few mismatching polls, and an English game's copy behind its own pointer counts when the zone after
+it and the parent in it are the ROM's and most bytes agree (a header the game changes while it runs) – never zone 0.

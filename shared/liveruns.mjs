@@ -55,7 +55,7 @@ export function cleanText(s, max) {
 
 /** File names don't belong on a post (streamer mode, and a run name is sometimes the ROM's name): drop the extension. */
 export function stripFileNames(s) {
-  return String(s ?? '').replace(/\.(?:nds|gba|gbc|gb|3ds|cia|cxi|zip|7z|sav|dsv|srm|state|ips|bps|ups|xdelta|vcdiff)\b/gi, '');
+  return String(s ?? '').replace(/\.(?:nds|gba|gbc|gb|sgb|3ds|cia|cxi|zip|7z|sav|dsv|srm|state|ips|bps|ups|xdelta|vcdiff)\b/gi, '');
 }
 
 const safeKey = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');

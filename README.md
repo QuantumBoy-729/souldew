@@ -110,7 +110,7 @@ Playing alone? Nuzlocke › **New Nuzlocke** asks only for your name, the game, 
 
 <img src="docs/media/poster-nuzlocke.webp" alt="Solo Nuzlocke board with team, level cap and counters." width="100%">
 
-- **Rules:** presets "Classic" (first encounter per area, fainted means dead, blackout ends the run, dupes and shiny clause) and "Hardcore" (plus strict level caps, no items in battle, "Set" battle style), or every rule on its own: blackout, deathless, dupes (species / evolution line), gifts & eggs and static encounters (count as the area / free extra / not allowed), type rule, nicknames, Pokémon Center visits per badge.
+- **Rules:** presets "Classic" (first encounter per area, fainted means dead, blackout ends the run, dupes and shiny clause) and "Hardcore" (plus strict level caps, no items in battle, "Set" battle style), or every rule on its own: blackout, deathless, dupes (species / evolution line), gifts & eggs and static encounters (count as the area / free extra / not allowed), type rule, nicknames, Pokémon Center visits per badge – and lives (a number of lives, every death costs one; in a SoulLink too, shared or per player).
 - **Detected automatically:** catches and their area, death at 0 HP with the opponent, blackout, level cap exceeded, a badge won above the cap, a second catch in a used-up area, a missing nickname; in battle: dupe, shiny (free catch), legendary.
 - **Missed encounters:** when a wild battle ends without a catch, the app asks unobtrusively whether that used up an area.
 - **Honour rules** (the app can't see your bag or the game options) are shown as reminders.

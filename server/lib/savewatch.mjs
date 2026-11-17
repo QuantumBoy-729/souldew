@@ -6,9 +6,11 @@ import { createHash } from 'node:crypto';
 import { parseHgssSave } from '../../shared/gen4save.mjs';
 
 export class SaveWatcher {
-  constructor(data, emit) {
+  /** `shinyOdds(runId)`: the run's shiny threshold (shared/shiny.mjs) – its game may call more Pokémon shiny. */
+  constructor(data, emit, { shinyOdds = () => 8 } = {}) {
     this.data = data;
     this.emit = emit;
+    this.shinyOdds = shinyOdds;
     this.watches = new Map(); // runId → { path, timer, lastHash, last }
   }
 
@@ -59,7 +61,7 @@ export class SaveWatcher {
     const hash = createHash('sha1').update(buf).digest('hex');
     if (!force && hash === w.lastHash) return w.last;
     try {
-      const parsed = parseHgssSave(new Uint8Array(buf), this.data);
+      const parsed = parseHgssSave(new Uint8Array(buf), { ...this.data, shinyOdds: this.shinyOdds(runId) });
       w.lastHash = hash;
       w.lastAt = new Date(statSync(w.path).mtimeMs).toISOString();
       w.error = null;
@@ -73,7 +75,7 @@ export class SaveWatcher {
         w.timer = setTimeout(() => this.read(runId), 1500);
       } else {
         w.error = e.message;
-        this.emit('save-error', { runId, error: e.message });
+        this.emit('save-error', { runId, error: e.message, code: e.code, vars: e.vars }); // (shared/gen4save.mjs saveError: the page words it)
       }
       return null;
     }
